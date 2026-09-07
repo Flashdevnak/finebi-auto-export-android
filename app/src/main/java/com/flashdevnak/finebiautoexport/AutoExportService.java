@@ -50,11 +50,15 @@ public final class AutoExportService extends Service {
         startForeground(NOTIFICATION_ID, buildNotification("กำลังเริ่มระบบ", false));
 
         Prefs.get(this).edit().putBoolean(Prefs.ENABLED, true).apply();
-        Prefs.setStatus(this, "STARTING", "กำลังเตรียม FineBI session");
 
-        if (SessionStore.isReady()) {
+        if (!NetworkHelper.isOnline(this)) {
+            enterOfflineState();
+            scheduleMonitor(30_000L);
+        } else if (SessionStore.isReady()) {
+            Prefs.setStatus(this, "STARTING", "กำลังตรวจ FineBI");
             scheduleMonitor(500);
         } else {
+            Prefs.setStatus(this, "STARTING", "กำลังเตรียม FineBI session");
             bootstrapSession();
         }
     }
@@ -71,7 +75,10 @@ public final class AutoExportService extends Service {
         }
 
         if (!stopping) {
-            if (SessionStore.isReady()) {
+            if (!NetworkHelper.isOnline(this)) {
+                enterOfflineState();
+                scheduleMonitor(30_000L);
+            } else if (SessionStore.isReady()) {
                 scheduleMonitor(250);
             } else {
                 bootstrapSession();
@@ -80,9 +87,22 @@ public final class AutoExportService extends Service {
         return START_STICKY;
     }
 
+    private void enterOfflineState() {
+        Prefs.setStatus(this, "OFFLINE", "ออฟไลน์ • เปิดดูไฟล์ได้ ระบบจะรอเครือข่ายกลับมา");
+        updateNotification("ออฟไลน์ • Auto Export รอเครือข่าย", false);
+    }
+
     private void bootstrapSession() {
         main.post(() -> {
-            if (stopping || bootstrapWebView != null || SessionStore.isReady()) {
+            if (stopping) return;
+
+            if (!NetworkHelper.isOnline(this)) {
+                enterOfflineState();
+                scheduleMonitor(30_000L);
+                return;
+            }
+
+            if (bootstrapWebView != null || SessionStore.isReady()) {
                 if (SessionStore.isReady()) scheduleMonitor(250);
                 return;
             }
@@ -126,12 +146,17 @@ public final class AutoExportService extends Service {
 
                         @Override
                         public void onMainFrameError(String description) {
+                            if (!NetworkHelper.isOnline(AutoExportService.this)) {
+                                enterOfflineState();
+                                scheduleMonitor(30_000L);
+                                return;
+                            }
                             Prefs.setStatus(
                                     AutoExportService.this,
                                     "VPN_REQUIRED",
-                                    "FineBI เข้าไม่ได้: ตรวจ Flashlink"
+                                    "FineBI เข้าไม่ได้ • ตรวจ Flashlink"
                             );
-                            updateNotification("FineBI เข้าไม่ได้ • แตะเพื่อเปิดแอป", true);
+                            updateNotification("FineBI เข้าไม่ได้ • ตรวจ Flashlink", true);
                             tryOpenFlashlinkRateLimited();
                         }
                     }
@@ -153,8 +178,15 @@ public final class AutoExportService extends Service {
     private void monitorOnce() {
         if (stopping) return;
 
+        if (!NetworkHelper.isOnline(this)) {
+            consecutiveErrors = 0;
+            enterOfflineState();
+            scheduleMonitor(30_000L);
+            return;
+        }
+
         if (!SessionStore.isReady()) {
-            Prefs.setStatus(this, "SESSION", "รอ FineBI session");
+            Prefs.setStatus(this, "SESSION", "กำลังเรียกคืน FineBI session");
             bootstrapSession();
             scheduleMonitor(5000);
             return;
@@ -164,10 +196,10 @@ public final class AutoExportService extends Service {
             Prefs.setStatus(
                     this,
                     "NEEDS_SETUP",
-                    "เปิด FineBI ในแอปแล้วกด Export Excel 1 ครั้ง"
+                    "ตั้งค่าครั้งแรกหลังติดตั้ง: เปิด FineBI แล้ว Export Excel 1 ครั้ง"
             );
-            updateNotification("ต้องเรียนรู้ Export template 1 ครั้ง • แตะเพื่อเปิดแอป", true);
-            scheduleMonitor(30_000);
+            updateNotification("ตั้งค่า Export ครั้งแรก 1 ครั้ง • แตะเพื่อเปิดแอป", true);
+            scheduleMonitor(60_000L);
             return;
         }
 
@@ -188,8 +220,9 @@ public final class AutoExportService extends Service {
             if (result.code == 401 || result.code == 403) {
                 SessionStore.clear();
                 consecutiveErrors = 0;
-                Prefs.setStatus(this, "SESSION_EXPIRED", "FineBI session หมดอายุ");
+                Prefs.setStatus(this, "SESSION_EXPIRED", "FineBI session หมดอายุ • กำลังจับใหม่");
                 updateNotification("Session หมดอายุ • กำลังจับใหม่", true);
+                destroyBootstrapWebView();
                 bootstrapSession();
                 scheduleMonitor(5000);
                 return;
@@ -208,6 +241,7 @@ public final class AutoExportService extends Service {
             consecutiveErrors = 0;
             Prefs.setBackendUpdate(this, update);
             Prefs.setStatus(this, "RUNNING", "กำลังเฝ้ารอบข้อมูล " + update);
+            Prefs.setError(this, "");
             updateNotification("Backend " + update + " • Auto Export ACTIVE", false);
 
             SharedPreferences prefs = Prefs.get(this);
@@ -219,14 +253,22 @@ public final class AutoExportService extends Service {
 
             scheduleMonitor(nextPollDelayMs());
         } catch (Exception e) {
+            if (!NetworkHelper.isOnline(this)) {
+                consecutiveErrors = 0;
+                enterOfflineState();
+                scheduleMonitor(30_000L);
+                return;
+            }
+
             consecutiveErrors++;
             Prefs.setError(this, e.getClass().getSimpleName() + ": " + e.getMessage());
 
             if (consecutiveErrors >= 3) {
                 Prefs.setStatus(this, "VPN_OR_NETWORK", "FineBI ไม่ตอบ • ตรวจ Flashlink");
-                updateNotification("FineBI ไม่ตอบ • แตะเพื่อเปิดแอป", true);
+                updateNotification("FineBI ไม่ตอบ • ตรวจ Flashlink", true);
                 tryOpenFlashlinkRateLimited();
                 SessionStore.clear();
+                destroyBootstrapWebView();
                 bootstrapSession();
             } else {
                 Prefs.setStatus(this, "RETRYING", "FineBI error • กำลังลองใหม่");
@@ -251,9 +293,9 @@ public final class AutoExportService extends Service {
             Prefs.setStatus(
                     this,
                     "NEEDS_SETUP",
-                    "ครั้งแรก: เปิด FineBI ในแอปแล้วกด Export Excel 1 ครั้ง"
+                    "ตั้งค่าครั้งแรกหลังติดตั้ง: เปิด FineBI แล้ว Export Excel 1 ครั้ง"
             );
-            updateNotification("ต้องเรียนรู้ Export template 1 ครั้ง • แตะเพื่อเปิดแอป", true);
+            updateNotification("ต้องตั้งค่า Export ครั้งแรก 1 ครั้ง", true);
             return;
         }
 
@@ -302,6 +344,7 @@ public final class AutoExportService extends Service {
                 saved.displayName
         );
         Prefs.setStatus(this, "RUNNING", "Export สำเร็จ " + update);
+        Prefs.setError(this, "");
         updateNotification("Export สำเร็จ " + update + " • HUB=ALL", false);
     }
 
@@ -315,15 +358,25 @@ public final class AutoExportService extends Service {
     }
 
     private void tryOpenFlashlinkRateLimited() {
+        if (!NetworkHelper.isOnline(this)) return;
         long now = System.currentTimeMillis();
         if (now - lastFlashlinkAttemptAt < 120_000L) return;
         lastFlashlinkAttemptAt = now;
-
         main.post(() -> FlashlinkHelper.open(this));
     }
 
+    private void destroyBootstrapWebView() {
+        main.post(() -> {
+            if (bootstrapWebView != null) {
+                bootstrapWebView.stopLoading();
+                bootstrapWebView.destroy();
+                bootstrapWebView = null;
+            }
+        });
+    }
+
     private Notification buildNotification(String text, boolean needsAttention) {
-        Intent openApp = new Intent(this, MainActivity.class);
+        Intent openApp = new Intent(this, MobileMainActivity.class);
         PendingIntent content = PendingIntent.getActivity(
                 this, 1, openApp,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
@@ -378,12 +431,7 @@ public final class AutoExportService extends Service {
     public void onDestroy() {
         stopping = true;
         if (workerThread != null) workerThread.quitSafely();
-        main.post(() -> {
-            if (bootstrapWebView != null) {
-                bootstrapWebView.destroy();
-                bootstrapWebView = null;
-            }
-        });
+        destroyBootstrapWebView();
         super.onDestroy();
     }
 
