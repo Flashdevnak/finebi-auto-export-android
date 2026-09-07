@@ -10,11 +10,23 @@ android {
         applicationId "com.flashdevnak.finebiautoexport"
         minSdk 29
         targetSdk 33
-        versionCode 2
-        versionName "0.2.0"
+        versionCode 3
+        versionName "0.2.1"
+    }
+
+    signingConfigs {
+        debug {
+            storeFile rootProject.file("ci-debug.keystore")
+            storePassword "finebi-debug"
+            keyAlias "finebi"
+            keyPassword "finebi-debug"
+        }
     }
 
     buildTypes {
+        debug {
+            signingConfig signingConfigs.debug
+        }
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
