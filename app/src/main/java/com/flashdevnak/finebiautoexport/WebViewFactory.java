@@ -28,11 +28,18 @@ public final class WebViewFactory {
         s.setAllowFileAccess(false);
         s.setAllowContentAccess(true);
         s.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
+        s.setUseWideViewPort(true);
+        s.setLoadWithOverviewMode(true);
+        s.setBuiltInZoomControls(true);
+        s.setDisplayZoomControls(false);
+        s.setTextZoom(100);
+        s.setDefaultFontSize(16);
 
         CookieManager cm = CookieManager.getInstance();
         cm.setAcceptCookie(true);
         cm.setAcceptThirdPartyCookies(webView, true);
 
+        webView.setBackgroundColor(android.graphics.Color.WHITE);
         webView.setWebViewClient(new FineBiWebViewClient(listener));
         return webView;
     }
