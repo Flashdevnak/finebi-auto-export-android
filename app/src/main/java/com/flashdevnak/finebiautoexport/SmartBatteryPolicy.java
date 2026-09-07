@@ -4,6 +4,7 @@ import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
+import java.util.TimeZone;
 
 /**
  * Battery-aware polling for a source that normally publishes a new th_update_time every ~30 minutes.
@@ -17,6 +18,7 @@ public final class SmartBatteryPolicy {
     public static final long FIRST_SYNC_POLL_MS = 60_000L;
     public static final long EXPECTED_CADENCE_MS = 30 * 60_000L;
     public static final long FAST_LEAD_MS = 5 * 60_000L;
+    private static final TimeZone THAILAND = TimeZone.getTimeZone("Asia/Bangkok");
 
     public static final class Plan {
         public final String mode;
@@ -44,8 +46,8 @@ public final class SmartBatteryPolicy {
         long fastStart = expected - FAST_LEAD_MS;
 
         if (nowMs >= fastStart) {
-            // Important: keep checking every 10s until a NEW th_update_time is actually exported.
-            // There is intentionally no fixed end time here.
+            // Keep checking every 10s until a NEW th_update_time is actually exported.
+            // There is intentionally no fixed end time here because FineBI can publish late.
             return new Plan("FAST", FAST_POLL_MS, expected, true);
         }
 
@@ -60,6 +62,7 @@ public final class SmartBatteryPolicy {
         try {
             SimpleDateFormat f = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US);
             f.setLenient(false);
+            f.setTimeZone(THAILAND);
             Date d = f.parse(value.trim());
             return d == null ? -1L : d.getTime();
         } catch (ParseException e) {
@@ -69,6 +72,8 @@ public final class SmartBatteryPolicy {
 
     public static String formatClock(long timeMs) {
         if (timeMs <= 0L) return "-";
-        return new SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(new Date(timeMs));
+        SimpleDateFormat f = new SimpleDateFormat("HH:mm:ss", Locale.getDefault());
+        f.setTimeZone(THAILAND);
+        return f.format(new Date(timeMs));
     }
 }
