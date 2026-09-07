@@ -42,7 +42,27 @@ public final class AutoExportService extends Service {
 
     private final Runnable monitorRunnable = new Runnable() {
         @Override public void run() {
-            monitorOnce();
+            if (stopping) return;
+            Prefs.touchServiceHeartbeat(AutoExportService.this);
+            try {
+                monitorOnce();
+            } catch (Throwable t) {
+                // Last-resort watchdog: never allow one unexpected exception to silently stop daily operation.
+                consecutiveErrors++;
+                Prefs.setConsecutiveErrors(AutoExportService.this, consecutiveErrors);
+                Prefs.setError(
+                        AutoExportService.this,
+                        t.getClass().getSimpleName() + ": " + String.valueOf(t.getMessage())
+                );
+                Prefs.setStatus(
+                        AutoExportService.this,
+                        "RECOVERING",
+                        "ระบบเจอข้อผิดพลาดภายใน • กำลังกู้คืนอัตโนมัติ"
+                );
+                updateNotification("กำลังกู้คืน Auto Export อัตโนมัติ", true);
+                destroyBootstrapWebView();
+                scheduleMonitor(Math.min(2 * 60_000L, Math.max(15_000L, errorRetryDelayMs())));
+            }
         }
     };
 
@@ -62,6 +82,7 @@ public final class AutoExportService extends Service {
                 .putBoolean(Prefs.ENABLED, true)
                 .putBoolean(Prefs.SMART_BATTERY, true)
                 .apply();
+        Prefs.markServiceStarted(this);
 
         if (!NetworkHelper.isOnline(this)) {
             enterOfflineState();
@@ -76,6 +97,8 @@ public final class AutoExportService extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
+        Prefs.touchServiceHeartbeat(this);
+
         if (intent != null && ACTION_STOP.equals(intent.getAction())) {
             stopping = true;
             cancelMonitor();
@@ -109,7 +132,15 @@ public final class AutoExportService extends Service {
                     if (stopping || worker == null) return;
                     worker.post(() -> {
                         if (stopping) return;
-                        Prefs.setStatus(AutoExportService.this, "NETWORK_BACK", "เครือข่ายกลับมา • ตรวจ FineBI ทันที");
+                        Prefs.touchServiceHeartbeat(AutoExportService.this);
+                        Prefs.setStatus(
+                                AutoExportService.this,
+                                "NETWORK_BACK",
+                                "เครือข่ายกลับมา • ตรวจ FineBI ทันที"
+                        );
+                        if (!SessionStore.isReady()) {
+                            bootstrapSession();
+                        }
                         scheduleMonitor(250L);
                     });
                 }
@@ -141,7 +172,12 @@ public final class AutoExportService extends Service {
 
     private void enterOfflineState() {
         cancelMonitor();
-        Prefs.setStatus(this, "OFFLINE", "Smart Battery • OFFLINE • หยุด polling จนกว่าเครือข่ายจะกลับมา");
+        Prefs.touchServiceHeartbeat(this);
+        Prefs.setStatus(
+                this,
+                "OFFLINE",
+                "Smart Battery • OFFLINE • หยุด polling จนกว่าเครือข่ายจะกลับมา"
+        );
         Prefs.setPollPlan(this, "OFFLINE", 0L, 0L, false);
         updateNotification("ออฟไลน์ • หยุด polling เพื่อประหยัดแบต", false);
     }
@@ -155,8 +191,13 @@ public final class AutoExportService extends Service {
                 return;
             }
 
-            if (bootstrapWebView != null || SessionStore.isReady()) {
-                if (SessionStore.isReady()) scheduleMonitor(250L);
+            if (SessionStore.isReady()) {
+                scheduleMonitor(250L);
+                return;
+            }
+
+            if (bootstrapWebView != null) {
+                // Existing hidden WebView is already trying to restore/login the FineBI session.
                 return;
             }
 
@@ -181,6 +222,8 @@ public final class AutoExportService extends Service {
 
                         @Override
                         public void onSessionCaptured() {
+                            consecutiveErrors = 0;
+                            Prefs.setConsecutiveErrors(AutoExportService.this, 0);
                             Prefs.setStatus(
                                     AutoExportService.this,
                                     "RUNNING",
@@ -189,12 +232,8 @@ public final class AutoExportService extends Service {
                             updateNotification("FineBI session พร้อม", false);
                             scheduleMonitor(250L);
 
-                            main.postDelayed(() -> {
-                                if (bootstrapWebView != null) {
-                                    bootstrapWebView.stopLoading();
-                                    bootstrapWebView.loadUrl("about:blank");
-                                }
-                            }, 1200L);
+                            // Release the hidden WebView after session capture to reduce RAM/battery use.
+                            main.postDelayed(() -> destroyBootstrapWebView(), 1500L);
                         }
 
                         @Override
@@ -229,9 +268,11 @@ public final class AutoExportService extends Service {
 
     private void monitorOnce() {
         if (stopping) return;
+        Prefs.touchServiceHeartbeat(this);
 
         if (!NetworkHelper.isOnline(this)) {
             consecutiveErrors = 0;
+            Prefs.setConsecutiveErrors(this, 0);
             enterOfflineState();
             return;
         }
@@ -255,6 +296,8 @@ public final class AutoExportService extends Service {
             return;
         }
 
+        Prefs.markPollAttempt(this);
+
         try {
             TemplateStore.UpdateTemplate updateTemplate = TemplateStore.loadUpdate(this);
             JsonUtils.NormalizeResult normalized = JsonUtils.normalizeFineBiBody(
@@ -272,6 +315,7 @@ public final class AutoExportService extends Service {
             if (result.code == 401 || result.code == 403) {
                 SessionStore.clear();
                 consecutiveErrors = 0;
+                Prefs.setConsecutiveErrors(this, 0);
                 Prefs.setStatus(this, "SESSION_EXPIRED", "FineBI session หมดอายุ • กำลังจับใหม่");
                 updateNotification("Session หมดอายุ • กำลังจับใหม่", true);
                 destroyBootstrapWebView();
@@ -291,7 +335,9 @@ public final class AutoExportService extends Service {
 
             String update = m.group();
             consecutiveErrors = 0;
+            Prefs.setConsecutiveErrors(this, 0);
             Prefs.setBackendUpdate(this, update);
+            Prefs.markPollOk(this, update);
             Prefs.setError(this, "");
 
             SharedPreferences prefs = Prefs.get(this);
@@ -301,18 +347,24 @@ public final class AutoExportService extends Service {
                 exportVersion(update);
                 lastSuccessful = Prefs.get(this).getString(Prefs.LAST_EXPORTED, lastSuccessful);
             } else if (isVersionOlder(update, lastSuccessful)) {
-                Prefs.setStatus(this, "WAITING", "FineBI ส่ง version เก่ากว่าไฟล์ล่าสุด • รอ version ใหม่จริง");
+                Prefs.setStatus(
+                        this,
+                        "WAITING",
+                        "FineBI ส่ง version เก่ากว่าไฟล์ล่าสุด • รอ version ใหม่จริง"
+                );
             }
 
             scheduleBySmartBattery(lastSuccessful);
         } catch (Exception e) {
             if (!NetworkHelper.isOnline(this)) {
                 consecutiveErrors = 0;
+                Prefs.setConsecutiveErrors(this, 0);
                 enterOfflineState();
                 return;
             }
 
             consecutiveErrors++;
+            Prefs.setConsecutiveErrors(this, consecutiveErrors);
             Prefs.setError(this, e.getClass().getSimpleName() + ": " + e.getMessage());
 
             if (consecutiveErrors >= 3) {
@@ -357,7 +409,8 @@ public final class AutoExportService extends Service {
             long minutes = Math.max(1L, (plan.delayMs + 59_999L) / 60_000L);
             message = "Smart Battery • ECO • เช็กอีกประมาณ " + minutes
                     + " นาที • FAST ก่อนรอบถัดไป 5 นาที";
-            notification = "ECO • รอบถัดไปประมาณ " + SmartBatteryPolicy.formatClock(plan.expectedNextAtMs);
+            notification = "ECO • รอบถัดไปประมาณ "
+                    + SmartBatteryPolicy.formatClock(plan.expectedNextAtMs);
         } else {
             message = "Smart Battery • SYNC • กำลังจับ version แรก";
             notification = "SYNC • กำลังจับ version แรก";
@@ -490,15 +543,19 @@ public final class AutoExportService extends Service {
     }
 
     private Notification buildNotification(String text, boolean needsAttention) {
-        Intent openApp = new Intent(this, MobileMainActivity.class);
+        Intent openApp = new Intent(this, MobileMainActivityV2.class);
         PendingIntent content = PendingIntent.getActivity(
-                this, 1, openApp,
+                this,
+                1,
+                openApp,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
         );
 
         Intent stop = new Intent(this, AutoExportService.class).setAction(ACTION_STOP);
         PendingIntent stopPi = PendingIntent.getService(
-                this, 2, stop,
+                this,
+                2,
+                stop,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
         );
 
