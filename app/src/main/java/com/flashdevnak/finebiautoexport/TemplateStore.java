@@ -23,6 +23,16 @@ public final class TemplateStore {
         }
     }
 
+    public static final class UpdateTemplate {
+        public final String url;
+        public final String body;
+
+        UpdateTemplate(String url, String body) {
+            this.url = url;
+            this.body = body;
+        }
+    }
+
     private TemplateStore() {}
 
     public static boolean isReady(Context context) {
@@ -43,6 +53,11 @@ public final class TemplateStore {
         }
 
         JSONObject root = new JSONObject(body);
+        JSONObject widgets = root.optJSONObject("widgets");
+        if (widgets == null || widgets.optJSONObject(FineBiConfig.UPDATE_WIDGET_ID) == null) {
+            throw new IllegalStateException("Captured export is missing th_update_time widget");
+        }
+
         clearSessionIds(root);
 
         JSONObject saved = new JSONObject();
@@ -60,19 +75,51 @@ public final class TemplateStore {
         }
     }
 
-    public static synchronized ExportTemplate load(Context context) throws Exception {
-        File f = new File(context.getFilesDir(), FILE_NAME);
-        String raw = new String(Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8);
-        JSONObject obj = new JSONObject(raw);
+    public static synchronized ExportTemplate loadExport(Context context) throws Exception {
+        JSONObject saved = loadSaved(context);
         return new ExportTemplate(
-                obj.getString("url"),
-                obj.getString("postData")
+                saved.getString("url"),
+                saved.getString("postData")
         );
+    }
+
+    public static synchronized UpdateTemplate loadUpdate(Context context) throws Exception {
+        JSONObject saved = loadSaved(context);
+        JSONObject exportRoot = new JSONObject(saved.getString("postData"));
+        JSONObject widgets = exportRoot.getJSONObject("widgets");
+        JSONObject sourceWidget = widgets.getJSONObject(FineBiConfig.UPDATE_WIDGET_ID);
+        JSONObject update = new JSONObject(sourceWidget.toString());
+
+        update.put("page", -1);
+        update.put("realData", true);
+        update.put("allData", false);
+        update.put("measuresToGeoms", 1);
+        update.put("chartBounds", new JSONObject().put("width", 371).put("height", 10));
+        update.put("filterValues", new JSONArray());
+        update.put("sessionId", "");
+        update.put(
+                "reportId",
+                exportRoot.optString("reportId", FineBiConfig.REPORT_ID)
+        );
+
+        String reportId = exportRoot.optString("reportId", FineBiConfig.REPORT_ID);
+        String url = FineBiConfig.BASE_URL
+                + "/webroot/decision/v5/design/widget/data?engineType=2&reportId="
+                + reportId
+                + "&bi_entry_type=MOUNT";
+
+        return new UpdateTemplate(url, update.toString());
     }
 
     public static synchronized void clear(Context context) {
         File f = new File(context.getFilesDir(), FILE_NAME);
         if (f.exists()) f.delete();
+    }
+
+    private static JSONObject loadSaved(Context context) throws Exception {
+        File f = new File(context.getFilesDir(), FILE_NAME);
+        String raw = new String(Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8);
+        return new JSONObject(raw);
     }
 
     private static void clearSessionIds(Object node) throws Exception {
