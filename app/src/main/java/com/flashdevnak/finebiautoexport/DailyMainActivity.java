@@ -40,17 +40,28 @@ public final class DailyMainActivity extends Activity {
     private TextView pollValue;
     private TextView batteryValue;
     private TextView dailyValue;
+    private TextView updateValue;
+    private TextView updateButton;
     private TextView latestFile;
     private TextView primaryAction;
     private TextView batteryButton;
     private TextView footer;
+    private String lastUpdateMessage = "";
 
     private final Runnable refreshRunnable = new Runnable() {
         @Override public void run() {
-            refreshStatus();
-            ui.postDelayed(this, 1500L);
+            try {
+                refreshStatus();
+            } catch (Throwable ignored) {
+                // UI refresh must never die permanently because one status source failed.
+            } finally {
+                if (!isFinishing()) ui.postDelayed(this, 3000L);
+            }
         }
     };
+
+    private final SharedPreferences.OnSharedPreferenceChangeListener prefListener =
+            (prefs, key) -> ui.post(this::safeRefreshStatus);
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -64,15 +75,50 @@ public final class DailyMainActivity extends Activity {
         if (Prefs.get(this).getBoolean(Prefs.ENABLED, false)) startAutoExport(false);
     }
 
+    @Override protected void onStart() {
+        super.onStart();
+        Prefs.get(this).registerOnSharedPreferenceChangeListener(prefListener);
+    }
+
     @Override protected void onResume() {
         super.onResume();
         ui.removeCallbacks(refreshRunnable);
-        ui.post(refreshRunnable);
+        safeRefreshStatus();
+        ui.postDelayed(refreshRunnable, 1000L);
+
+        // If Android sent the user to "Install unknown apps", continue automatically on return.
+        UpdateManager.resumePendingInstall(this, this::onUpdateEvent);
+        UpdateManager.checkAsync(this, false, this::onUpdateEvent);
+    }
+
+    @Override public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus) safeRefreshStatus();
     }
 
     @Override protected void onPause() {
         ui.removeCallbacks(refreshRunnable);
         super.onPause();
+    }
+
+    @Override protected void onStop() {
+        Prefs.get(this).unregisterOnSharedPreferenceChangeListener(prefListener);
+        super.onStop();
+    }
+
+    private void safeRefreshStatus() {
+        try {
+            refreshStatus();
+        } catch (Throwable ignored) {
+            // Keep the page alive; the 3-second fallback refresh will try again.
+        }
+    }
+
+    private void onUpdateEvent(UpdateManager.Info info, String message) {
+        runOnUiThread(() -> {
+            lastUpdateMessage = message == null ? "" : message;
+            safeRefreshStatus();
+        });
     }
 
     private boolean compact() {
@@ -167,6 +213,27 @@ public final class DailyMainActivity extends Activity {
         pollValue = (TextView) pollCard.getChildAt(1);
         addResponsive(body, backendCard, pollCard, 7);
 
+        LinearLayout updateCard = metricCard(
+                "App Update",
+                "กำลังตรวจ",
+                "ตรวจ GitHub Release • ตรวจ package + ลายเซ็นก่อนติดตั้ง"
+        );
+        updateValue = (TextView) updateCard.getChildAt(1);
+        body.addView(updateCard, UiKit.full(this, 7));
+
+        updateButton = UiKit.button(this, "ตรวจอัปเดต", false);
+        updateButton.setOnClickListener(v -> {
+            UpdateManager.Info info = UpdateManager.cached(this);
+            if (info.available) {
+                UpdateManager.startUpdate(this, info, this::onUpdateEvent);
+            } else {
+                lastUpdateMessage = "กำลังตรวจอัปเดต...";
+                safeRefreshStatus();
+                UpdateManager.checkAsync(this, true, this::onUpdateEvent);
+            }
+        });
+        body.addView(updateButton, UiKit.full(this, 7));
+
         body.addView(UiKit.text(this, "ไฟล์ล่าสุด", 12, UiKit.MUTED, true), UiKit.full(this, 14));
         latestFile = UiKit.text(this, "ยังไม่มีไฟล์", c ? 12 : 14, UiKit.TEXT, true);
         latestFile.setSingleLine(true);
@@ -201,7 +268,7 @@ public final class DailyMainActivity extends Activity {
         scroll.setFillViewport(true);
         scroll.addView(body);
         setPage(scroll);
-        refreshStatus();
+        safeRefreshStatus();
     }
 
     private LinearLayout metricCard(String title, String value, String detail) {
@@ -299,7 +366,7 @@ public final class DailyMainActivity extends Activity {
     }
 
     private void refreshStatus() {
-        if (heroTitle == null) return;
+        if (heroTitle == null || dailyValue == null) return;
 
         SharedPreferences p = Prefs.get(this);
         boolean enabled = p.getBoolean(Prefs.ENABLED, false);
@@ -340,6 +407,25 @@ public final class DailyMainActivity extends Activity {
         batteryValue.setText(batteryReady ? "UNRESTRICTED" : "ควรตั้งค่า");
         batteryValue.setTextColor(batteryReady ? UiKit.GREEN : UiKit.AMBER);
         batteryButton.setText(batteryReady ? "Battery = Unrestricted ✓" : "ตั้งค่า Battery = Unrestricted");
+
+        UpdateManager.Info updateInfo = UpdateManager.cached(this);
+        if (updateInfo.available) {
+            updateValue.setText("มี v" + updateInfo.version);
+            updateValue.setTextColor(UiKit.BLUE);
+            updateButton.setText("อัปเดตเป็น v" + updateInfo.version);
+            updateButton.setBackground(UiKit.rounded(UiKit.BLUE, 12, this));
+            updateButton.setTextColor(Color.WHITE);
+        } else if (updateInfo.checkedAt > 0L) {
+            updateValue.setText("ล่าสุด • v" + BuildConfig.VERSION_NAME);
+            updateValue.setTextColor(UiKit.GREEN);
+            updateButton.setText("ตรวจอัปเดต");
+            updateButton.setBackground(UiKit.outlined(Color.WHITE, UiKit.BORDER, 12, this));
+            updateButton.setTextColor(UiKit.TEXT);
+        } else {
+            updateValue.setText("ยังไม่ได้ตรวจ");
+            updateValue.setTextColor(UiKit.MUTED);
+            updateButton.setText("ตรวจอัปเดต");
+        }
 
         boolean dailyReady = enabled
                 && templateReady
@@ -395,11 +481,13 @@ public final class DailyMainActivity extends Activity {
         primaryAction.setBackground(UiKit.rounded(enabled ? UiKit.RED : UiKit.BLUE, 12, this));
 
         StringBuilder f = new StringBuilder();
-        f.append("Auto start: หลังเปิดเครื่องและหลังอัปเดตแอป");
+        f.append("App v").append(BuildConfig.VERSION_NAME);
+        f.append(" • Auto start: หลังเปิดเครื่องและหลังอัปเดตแอป");
         if (nextCheck > 0L) f.append("\nตรวจครั้งถัดไป: ").append(formatTime(nextCheck));
         if (lastPollOk > 0L) f.append("\nFineBI ตอบล่าสุด: ").append(formatTime(lastPollOk));
         if (errors > 0) f.append("\nRetry/Error ต่อเนื่อง: ").append(errors);
         if (message != null && !message.isEmpty()) f.append("\n").append(message);
+        if (!lastUpdateMessage.isEmpty()) f.append("\nUpdate: ").append(lastUpdateMessage);
         footer.setText(f.toString());
     }
 
