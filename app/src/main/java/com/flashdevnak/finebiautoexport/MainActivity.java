@@ -40,6 +40,7 @@ public final class MainActivity extends Activity {
     private TextView statusText;
     private TextView sessionText;
     private TextView flashlinkText;
+    private TextView templateText;
     private WebView webView;
     private ListView historyList;
 
@@ -151,6 +152,9 @@ public final class MainActivity extends Activity {
         sessionText = statusCard("FineBI Session");
         body.addView(sessionText);
 
+        templateText = statusCard("Export Template");
+        body.addView(templateText);
+
         statusText = statusCard("Auto Export");
         body.addView(statusText);
 
@@ -159,7 +163,7 @@ public final class MainActivity extends Activity {
         body.addView(all);
 
         Button start = actionButton("▶ เริ่ม Auto Export");
-        start.setOnClickListener(v -> startAutoExportService());
+        start.setOnClickListener(v -> startService());
         body.addView(start);
 
         Button stop = actionButton("■ หยุด Auto Export");
@@ -193,9 +197,9 @@ public final class MainActivity extends Activity {
 
         TextView note = new TextView(this);
         note.setText(
-                "หลักการ: แอปไม่ข้าม VPN และไม่เก็บ Authorization/Cookie ลงไฟล์\n" +
-                "ถ้า FineBI เข้าไม่ได้ ให้ Flashlink เชื่อมต่อก่อน ระบบจะกลับมาทำงานต่อเอง\n" +
-                "ไฟล์: Downloads/FineBI_Auto_Export/YYYY-MM-DD/"
+                "ครั้งแรก: เปิด FineBI ในแอป → Login → กด Export Excel ตามปกติ 1 ครั้ง เพื่อให้แอปเรียนรู้ request\n" +
+                "แอปจะลบ sessionId ก่อนเก็บ template และไม่เก็บ Authorization/Cookie ลงไฟล์\n" +
+                "จากนั้น Auto Export จะทำงานเอง • ไฟล์: Downloads/FineBI_Auto_Export/YYYY-MM-DD/"
         );
         note.setTextSize(13);
         note.setTextColor(Color.DKGRAY);
@@ -231,12 +235,14 @@ public final class MainActivity extends Activity {
                         Prefs.setStatus(MainActivity.this, "WEBVIEW", "กำลังเปิด FineBI");
                     }
 
-                    @Override public void onPageFinished(String url) {}
+                    @Override public void onPageFinished(String url) {
+                        installExportCaptureHook();
+                    }
 
                     @Override public void onSessionCaptured() {
                         runOnUiThread(() -> {
                             Prefs.setStatus(MainActivity.this, "RUNNING", "FineBI session พร้อม");
-                            startAutoExportService();
+                            startService();
                         });
                     }
 
@@ -250,6 +256,24 @@ public final class MainActivity extends Activity {
                         );
                     }
                 }
+        );
+        webView.addJavascriptInterface(
+                new ExportCaptureBridge(this, new ExportCaptureBridge.Listener() {
+                    @Override public void onTemplateCaptured() {
+                        Prefs.setStatus(MainActivity.this, "RUNNING", "Export template พร้อม");
+                        startService();
+                        refreshStatus();
+                    }
+
+                    @Override public void onTemplateCaptureError(String message) {
+                        Toast.makeText(
+                                MainActivity.this,
+                                "จับ Export template ไม่สำเร็จ: " + message,
+                                Toast.LENGTH_LONG
+                        ).show();
+                    }
+                }),
+                "FineBIExportCapture"
         );
         page.addView(webView, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
@@ -302,6 +326,13 @@ public final class MainActivity extends Activity {
                         : "ยังไม่จับ session • เปิดแท็บ FineBI และ login 1 ครั้ง")
         );
 
+        templateText.setText(
+                "Export Template\n" +
+                (TemplateStore.isReady(this)
+                        ? "✓ พร้อม • Auto Export ใช้ template ที่เรียนรู้แล้ว"
+                        : "ยังไม่มี • ครั้งแรกให้เปิด FineBI แล้วกด Export Excel 1 ครั้ง")
+        );
+
         StringBuilder sb = new StringBuilder();
         sb.append("Auto Export\n");
         sb.append(enabled ? "● ENABLED" : "○ STOPPED");
@@ -347,7 +378,27 @@ public final class MainActivity extends Activity {
         });
     }
 
-    private void startAutoExportService() {
+    private void installExportCaptureHook() {
+        if (webView == null) return;
+        String js = "(function(){" +
+                "if(window.__finebiExportCaptureInstalled)return;" +
+                "window.__finebiExportCaptureInstalled=true;" +
+                "function cap(u,b){try{" +
+                "u=new URL(u,location.href).href;" +
+                "if(u.indexOf('/export/excel')>=0&&typeof b==='string'&&b.length>1000){" +
+                "FineBIExportCapture.captureExport(u,b);}}catch(e){}}" +
+                "var of=window.fetch;if(of){window.fetch=function(i,n){" +
+                "try{var u=(typeof i==='string')?i:(i&&i.url)||'';cap(u,n&&n.body);}catch(e){}" +
+                "return of.apply(this,arguments);};}" +
+                "var oo=XMLHttpRequest.prototype.open;" +
+                "var os=XMLHttpRequest.prototype.send;" +
+                "XMLHttpRequest.prototype.open=function(m,u){this.__finebiU=u;return oo.apply(this,arguments);};" +
+                "XMLHttpRequest.prototype.send=function(b){try{cap(this.__finebiU||'',b);}catch(e){}return os.apply(this,arguments);};" +
+                "})();";
+        webView.evaluateJavascript(js, null);
+    }
+
+    private void startService() {
         Prefs.get(this).edit().putBoolean(Prefs.ENABLED, true).apply();
         Intent i = new Intent(this, AutoExportService.class)
                 .setAction(AutoExportService.ACTION_START);
