@@ -1,0 +1,75 @@
+name: Publish APK Release
+
+on:
+  workflow_run:
+    workflows: ["Build Android APK"]
+    types: [completed]
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  release:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout built commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Check release commit
+        id: release_gate
+        run: |
+          SUBJECT=$(git log -1 --pretty=%s)
+          if [[ "$SUBJECT" == release:* ]]; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download signed APK artifact
+        if: steps.release_gate.outputs.publish == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: FineBI-Auto-Export-Android-debug
+          path: release-apk
+          github-token: ${{ github.token }}
+          run-id: ${{ github.event.workflow_run.id }}
+
+      - name: Prepare release metadata
+        if: steps.release_gate.outputs.publish == 'true'
+        id: meta
+        run: |
+          VERSION=$(grep -E 'versionName[[:space:]]+"' app/build.gradle | head -1 | sed -E 's/.*versionName[[:space:]]+"([^"]+)".*/\1/')
+          VERSION_CODE=$(grep -E 'versionCode[[:space:]]+[0-9]+' app/build.gradle | head -1 | sed -E 's/.*versionCode[[:space:]]+([0-9]+).*/\1/')
+          test -n "$VERSION"
+          test -n "$VERSION_CODE"
+          test -f release-apk/app-debug.apk
+          APK="FineBI-Auto-Export-Android-v${VERSION}.apk"
+          cp release-apk/app-debug.apk "$APK"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "version_code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
+          echo "apk=$APK" >> "$GITHUB_OUTPUT"
+
+      - name: Publish GitHub Release
+        if: steps.release_gate.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.meta.outputs.version }}
+          VERSION_CODE: ${{ steps.meta.outputs.version_code }}
+          APK: ${{ steps.meta.outputs.apk }}
+        run: |
+          TAG="v${VERSION}"
+          NOTES="FineBI Auto Export v${VERSION} (versionCode ${VERSION_CODE}). Android verifies package name, version and signing certificate before opening the system installer."
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$APK" --clobber
+          else
+            gh release create "$TAG" "$APK" \
+              --target "${{ github.event.workflow_run.head_sha }}" \
+              --title "FineBI Auto Export v${VERSION}" \
+              --notes "$NOTES"
+          fi
