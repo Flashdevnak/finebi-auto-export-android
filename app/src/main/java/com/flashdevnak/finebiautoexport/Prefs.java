@@ -14,11 +14,20 @@ public final class Prefs {
     public static final String LAST_EXPORT_NAME = "last_export_name";
     public static final String LAST_EXPORT_AT = "last_export_at";
     public static final String LAST_ERROR = "last_error";
+    public static final String SMART_BATTERY = "smart_battery";
+    public static final String POLL_MODE = "poll_mode";
+    public static final String NEXT_CHECK_AT = "next_check_at";
+    public static final String EXPECTED_NEXT_VERSION_AT = "expected_next_version_at";
+    public static final String WAITING_FOR_NEW_VERSION = "waiting_for_new_version";
 
     private Prefs() {}
 
     public static SharedPreferences get(Context c) {
-        return c.getSharedPreferences(FILE, Context.MODE_PRIVATE);
+        SharedPreferences p = c.getSharedPreferences(FILE, Context.MODE_PRIVATE);
+        if (!p.contains(SMART_BATTERY)) {
+            p.edit().putBoolean(SMART_BATTERY, true).apply();
+        }
+        return p;
     }
 
     public static void setStatus(Context c, String state, String message) {
@@ -44,5 +53,20 @@ public final class Prefs {
 
     public static void setError(Context c, String error) {
         get(c).edit().putString(LAST_ERROR, error == null ? "" : error).apply();
+    }
+
+    public static void setPollPlan(
+            Context c,
+            String mode,
+            long nextCheckAt,
+            long expectedNextVersionAt,
+            boolean waitingForNewVersion
+    ) {
+        get(c).edit()
+                .putString(POLL_MODE, mode == null ? "" : mode)
+                .putLong(NEXT_CHECK_AT, nextCheckAt)
+                .putLong(EXPECTED_NEXT_VERSION_AT, expectedNextVersionAt)
+                .putBoolean(WAITING_FOR_NEW_VERSION, waitingForNewVersion)
+                .apply();
     }
 }
