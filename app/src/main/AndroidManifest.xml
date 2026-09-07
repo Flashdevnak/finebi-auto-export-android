@@ -20,7 +20,7 @@
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
 
         <activity
-            android:name=".MobileMainActivityV2"
+            android:name=".DailyMainActivity"
             android:exported="true"
             android:screenOrientation="unspecified">
             <intent-filter>
@@ -31,6 +31,11 @@
 
         <activity
             android:name=".MainActivity"
+            android:exported="false"
+            android:screenOrientation="unspecified" />
+
+        <activity
+            android:name=".MobileMainActivityV2"
             android:exported="false"
             android:screenOrientation="unspecified" />
 
