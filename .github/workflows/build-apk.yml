@@ -35,14 +35,16 @@ jobs:
       - name: Restore stable debug signing key
         run: |
           base64 -d .github/signing/finebi-debug.keystore.b64 > ci-debug.keystore
-          keytool -list -keystore ci-debug.keystore -storepass finebi-debug -alias finebi >/dev/null
+          keytool -list -v -keystore ci-debug.keystore -storepass finebi-debug -alias finebi | grep -F "SHA256: 50:DA:2D:A8:6C:00:8F:12:10:C3:C4:18:31:25:8E:E9:58:F6:DD:2D:14:51:45:CE:39:B2:E2:E4:53:D8:BE:B6"
 
       - name: Build debug APK
         run: gradle :app:assembleDebug --stacktrace
 
-      - name: Verify signing fingerprint
+      - name: Verify APK signature
         run: |
-          keytool -printcert -jarfile app/build/outputs/apk/debug/app-debug.apk | grep -E "SHA256: 50:DA:2D:A8:6C:00:8F:12:10:C3:C4:18:31:25:8E:E9:58:F6:DD:2D:14:51:45:CE:39:B2:E2:E4:53:D8:BE:B6"
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)
+          "$APKSIGNER" verify --print-certs app/build/outputs/apk/debug/app-debug.apk | tee /tmp/apk-signature.txt
+          grep -Fi "50da2da86c008f1210c3c41831258ee958f6dd2d145145ce39b2e2e453d8beb6" /tmp/apk-signature.txt
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
