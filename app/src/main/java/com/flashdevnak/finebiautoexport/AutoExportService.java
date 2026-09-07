@@ -32,7 +32,6 @@ public final class AutoExportService extends Service {
     private HandlerThread workerThread;
     private Handler worker;
     private Handler main;
-    private FineBiConfig config;
     private WebView bootstrapWebView;
     private final AtomicBoolean monitorScheduled = new AtomicBoolean(false);
     private volatile boolean stopping;
@@ -49,16 +48,6 @@ public final class AutoExportService extends Service {
 
         createNotificationChannel();
         startForeground(NOTIFICATION_ID, buildNotification("กำลังเริ่มระบบ", false));
-
-        try {
-            config = FineBiConfig.load(this);
-        } catch (Exception e) {
-            Prefs.setError(this, e.toString());
-            Prefs.setStatus(this, "ERROR", "โหลด FineBI template ไม่ได้");
-            updateNotification("Template error", true);
-            stopSelf();
-            return;
-        }
 
         Prefs.get(this).edit().putBoolean(Prefs.ENABLED, true).apply();
         Prefs.setStatus(this, "STARTING", "กำลังเตรียม FineBI session");
@@ -81,7 +70,7 @@ public final class AutoExportService extends Service {
             return START_NOT_STICKY;
         }
 
-        if (!stopping && config != null) {
+        if (!stopping) {
             if (SessionStore.isReady()) {
                 scheduleMonitor(250);
             } else {
@@ -171,15 +160,27 @@ public final class AutoExportService extends Service {
             return;
         }
 
+        if (!TemplateStore.isReady(this)) {
+            Prefs.setStatus(
+                    this,
+                    "NEEDS_SETUP",
+                    "เปิด FineBI ในแอปแล้วกด Export Excel 1 ครั้ง"
+            );
+            updateNotification("ต้องเรียนรู้ Export template 1 ครั้ง • แตะเพื่อเปิดแอป", true);
+            scheduleMonitor(30_000);
+            return;
+        }
+
         try {
+            TemplateStore.UpdateTemplate updateTemplate = TemplateStore.loadUpdate(this);
             JsonUtils.NormalizeResult normalized = JsonUtils.normalizeFineBiBody(
-                    config.updateBody,
+                    updateTemplate.body,
                     SessionStore.sessionId(),
                     true
             );
 
             FineBiApi.Result result = FineBiApi.post(
-                    config.updateUrl,
+                    updateTemplate.url,
                     normalized.body,
                     20_000
             );
@@ -246,11 +247,23 @@ public final class AutoExportService extends Service {
             return;
         }
 
+        if (!TemplateStore.isReady(this)) {
+            Prefs.setStatus(
+                    this,
+                    "NEEDS_SETUP",
+                    "ครั้งแรก: เปิด FineBI ในแอปแล้วกด Export Excel 1 ครั้ง"
+            );
+            updateNotification("ต้องเรียนรู้ Export template 1 ครั้ง • แตะเพื่อเปิดแอป", true);
+            return;
+        }
+
+        TemplateStore.ExportTemplate exportTemplate = TemplateStore.loadExport(this);
+
         Prefs.setStatus(this, "EXPORTING", "กำลัง Export " + update);
         updateNotification("กำลัง Export " + update + " • HUB=ALL", false);
 
         JsonUtils.NormalizeResult normalized = JsonUtils.normalizeFineBiBody(
-                config.exportBody,
+                exportTemplate.body,
                 SessionStore.sessionId(),
                 true
         );
@@ -262,7 +275,7 @@ public final class AutoExportService extends Service {
         }
 
         FineBiApi.Result result = FineBiApi.post(
-                config.exportUrl,
+                exportTemplate.url,
                 normalized.body,
                 60_000
         );
