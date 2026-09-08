@@ -36,6 +36,11 @@ public final class MailSettings {
         return get(c).getBoolean(ENABLED, false) && configured(c);
     }
 
+    public static boolean authRequired(Context c) {
+        String status = get(c).getString(STATUS, "");
+        return status != null && status.startsWith("AUTH_REQUIRED");
+    }
+
     public static void saveRecipients(
             Context c,
             boolean enabled,
@@ -54,10 +59,16 @@ public final class MailSettings {
     }
 
     public static void markGoogleConnected(Context c, String email) {
-        get(c).edit()
+        SharedPreferences p = get(c);
+        String resolved = clean(email);
+        if (resolved.isEmpty()) {
+            resolved = p.getString(GOOGLE_EMAIL, "");
+        }
+        p.edit()
                 .putBoolean(GOOGLE_CONNECTED, true)
-                .putString(GOOGLE_EMAIL, email == null ? "" : email)
+                .putString(GOOGLE_EMAIL, resolved == null ? "" : resolved)
                 .putString(STATUS, "GOOGLE_CONNECTED")
+                .putLong(NEXT_RETRY_AT, 0L)
                 .apply();
     }
 
@@ -70,11 +81,16 @@ public final class MailSettings {
                 .apply();
     }
 
+    /**
+     * Google may occasionally require consent again. That does not mean the
+     * sender account has been removed from this app. Keep the selected account,
+     * recipients and Auto Email preference intact; only pause sending until the
+     * user confirms the permission again.
+     */
     public static void markAuthRequired(Context c, String reason) {
         String safe = reason == null ? "" : reason;
         if (safe.length() > 160) safe = safe.substring(0, 160);
         get(c).edit()
-                .putBoolean(GOOGLE_CONNECTED, false)
                 .putString(STATUS, "AUTH_REQUIRED" + (safe.isEmpty() ? "" : " • " + safe))
                 .putLong(NEXT_RETRY_AT, 0L)
                 .apply();
