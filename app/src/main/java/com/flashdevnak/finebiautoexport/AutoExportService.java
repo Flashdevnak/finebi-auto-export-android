@@ -47,7 +47,6 @@ public final class AutoExportService extends Service {
             try {
                 monitorOnce();
             } catch (Throwable t) {
-                // Last-resort watchdog: never allow one unexpected exception to silently stop daily operation.
                 consecutiveErrors++;
                 Prefs.setConsecutiveErrors(AutoExportService.this, consecutiveErrors);
                 Prefs.setError(
@@ -83,6 +82,9 @@ public final class AutoExportService extends Service {
                 .putBoolean(Prefs.SMART_BATTERY, true)
                 .apply();
         Prefs.markServiceStarted(this);
+
+        UpdateManager.maybeCheckAndNotify(this);
+        MailManager.kick(this);
 
         if (!NetworkHelper.isOnline(this)) {
             enterOfflineState();
@@ -138,6 +140,8 @@ public final class AutoExportService extends Service {
                                 "NETWORK_BACK",
                                 "เครือข่ายกลับมา • ตรวจ FineBI ทันที"
                         );
+                        MailManager.kick(AutoExportService.this);
+                        UpdateManager.maybeCheckAndNotify(AutoExportService.this);
                         if (!SessionStore.isReady()) {
                             bootstrapSession();
                         }
@@ -196,10 +200,7 @@ public final class AutoExportService extends Service {
                 return;
             }
 
-            if (bootstrapWebView != null) {
-                // Existing hidden WebView is already trying to restore/login the FineBI session.
-                return;
-            }
+            if (bootstrapWebView != null) return;
 
             Prefs.setStatus(this, "SESSION", "กำลังเปิด FineBI เพื่อจับ session");
             updateNotification("กำลังจับ FineBI session", false);
@@ -231,8 +232,6 @@ public final class AutoExportService extends Service {
                             );
                             updateNotification("FineBI session พร้อม", false);
                             scheduleMonitor(250L);
-
-                            // Release the hidden WebView after session capture to reduce RAM/battery use.
                             main.postDelayed(() -> destroyBootstrapWebView(), 1500L);
                         }
 
@@ -269,6 +268,8 @@ public final class AutoExportService extends Service {
     private void monitorOnce() {
         if (stopping) return;
         Prefs.touchServiceHeartbeat(this);
+        MailManager.kick(this);
+        UpdateManager.maybeCheckAndNotify(this);
 
         if (!NetworkHelper.isOnline(this)) {
             consecutiveErrors = 0;
@@ -324,14 +325,10 @@ public final class AutoExportService extends Service {
                 return;
             }
 
-            if (!result.ok()) {
-                throw new IllegalStateException("FineBI HTTP " + result.code);
-            }
+            if (!result.ok()) throw new IllegalStateException("FineBI HTTP " + result.code);
 
             Matcher m = TIME_PATTERN.matcher(result.text());
-            if (!m.find()) {
-                throw new IllegalStateException("ไม่พบ th_update_time ใน response");
-            }
+            if (!m.find()) throw new IllegalStateException("ไม่พบ th_update_time ใน response");
 
             String update = m.group();
             consecutiveErrors = 0;
@@ -461,6 +458,7 @@ public final class AutoExportService extends Service {
 
         if (ExportStore.exists(this, displayName)) {
             Prefs.setExport(this, update, "", displayName);
+            MailManager.onExportSaved(this, update, displayName);
             updateNotification("มีไฟล์รอบ " + update + " อยู่แล้ว", false);
             return;
         }
@@ -498,20 +496,14 @@ public final class AutoExportService extends Service {
                 60_000
         );
 
-        if (!result.ok()) {
-            throw new IllegalStateException("Export HTTP " + result.code);
-        }
+        if (!result.ok()) throw new IllegalStateException("Export HTTP " + result.code);
         if (result.bytes.length < 4
                 || result.bytes[0] != 0x50
                 || result.bytes[1] != 0x4B) {
             throw new IllegalStateException("Export response ไม่ใช่ XLSX");
         }
 
-        ExportStore.Saved saved = ExportStore.saveValidated(
-                this,
-                result.bytes,
-                update
-        );
+        ExportStore.Saved saved = ExportStore.saveValidated(this, result.bytes, update);
 
         Prefs.setExport(
                 this,
@@ -521,6 +513,7 @@ public final class AutoExportService extends Service {
         );
         Prefs.setStatus(this, "RUNNING", "Export สำเร็จ " + update);
         Prefs.setError(this, "");
+        MailManager.onExportSaved(this, update, saved.displayName);
         updateNotification("Export สำเร็จ " + update + " • HUB=ALL", false);
     }
 
@@ -543,10 +536,11 @@ public final class AutoExportService extends Service {
     }
 
     private Notification buildNotification(String text, boolean needsAttention) {
-        Intent openApp = new Intent(this, MobileMainActivityV2.class);
+        Intent openApp = new Intent(this, DailyMainActivity.class)
+                .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
         PendingIntent content = PendingIntent.getActivity(
                 this,
-                1,
+                101,
                 openApp,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
         );
