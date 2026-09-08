@@ -23,6 +23,7 @@
         <activity
             android:name=".DailyMainActivity"
             android:exported="true"
+            android:launchMode="singleTask"
             android:screenOrientation="unspecified">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -36,12 +37,7 @@
             android:screenOrientation="unspecified" />
 
         <activity
-            android:name=".MobileMainActivityV2"
-            android:exported="false"
-            android:screenOrientation="unspecified" />
-
-        <activity
-            android:name=".MobileMainActivity"
+            android:name=".MailSettingsActivity"
             android:exported="false"
             android:screenOrientation="unspecified" />
 
