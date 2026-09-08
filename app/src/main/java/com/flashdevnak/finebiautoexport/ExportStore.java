@@ -9,8 +9,10 @@ import android.net.Uri;
 import android.os.Environment;
 import android.provider.MediaStore;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.List;
@@ -41,24 +43,10 @@ public final class ExportStore {
     private ExportStore() {}
 
     public static boolean exists(Context context, String displayName) {
-        ContentResolver r = context.getContentResolver();
-        String[] projection = { MediaStore.Downloads._ID };
-        String selection = MediaStore.Downloads.DISPLAY_NAME + "=?";
-        String[] args = { displayName };
-
-        try (Cursor c = r.query(
-                MediaStore.Downloads.EXTERNAL_CONTENT_URI,
-                projection, selection, args, null
-        )) {
-            return c != null && c.moveToFirst();
-        }
+        return findUri(context, displayName) != null;
     }
 
-    public static Saved saveValidated(
-            Context context,
-            byte[] bytes,
-            String updateTime
-    ) throws Exception {
+    public static Saved saveValidated(Context context, byte[] bytes, String updateTime) throws Exception {
         String date = updateTime.substring(0, 10);
         String safe = updateTime.replace(":", "-").replace(" ", "_");
         String name = "HUB_departure_monitor_" + safe + ".xlsx";
@@ -81,14 +69,10 @@ public final class ExportStore {
 
         ContentValues values = new ContentValues();
         values.put(MediaStore.Downloads.DISPLAY_NAME, name);
-        values.put(
-                MediaStore.Downloads.MIME_TYPE,
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        );
-        values.put(
-                MediaStore.Downloads.RELATIVE_PATH,
-                Environment.DIRECTORY_DOWNLOADS + "/FineBI_Auto_Export/" + date
-        );
+        values.put(MediaStore.Downloads.MIME_TYPE,
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+        values.put(MediaStore.Downloads.RELATIVE_PATH,
+                Environment.DIRECTORY_DOWNLOADS + "/FineBI_Auto_Export/" + date);
         values.put(MediaStore.Downloads.IS_PENDING, 1);
 
         ContentResolver resolver = context.getContentResolver();
@@ -124,50 +108,58 @@ public final class ExportStore {
                 MediaStore.Downloads.DISPLAY_NAME,
                 MediaStore.Downloads.DATE_MODIFIED
         };
-
         String selection = MediaStore.Downloads.RELATIVE_PATH + " LIKE ?";
         String[] args = { Environment.DIRECTORY_DOWNLOADS + "/FineBI_Auto_Export/%" };
         String sort = MediaStore.Downloads.DATE_MODIFIED + " DESC";
 
-        try (Cursor c = r.query(
-                MediaStore.Downloads.EXTERNAL_CONTENT_URI,
-                projection, selection, args, sort
-        )) {
+        try (Cursor c = r.query(MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                projection, selection, args, sort)) {
             if (c != null) {
                 int idCol = c.getColumnIndexOrThrow(MediaStore.Downloads._ID);
                 int nameCol = c.getColumnIndexOrThrow(MediaStore.Downloads.DISPLAY_NAME);
                 int modifiedCol = c.getColumnIndexOrThrow(MediaStore.Downloads.DATE_MODIFIED);
-
                 while (c.moveToNext() && out.size() < limit) {
                     long id = c.getLong(idCol);
                     String name = c.getString(nameCol);
                     long modified = c.getLong(modifiedCol) * 1000L;
-                    Uri uri = ContentUris.withAppendedId(
-                            MediaStore.Downloads.EXTERNAL_CONTENT_URI, id
-                    );
+                    Uri uri = ContentUris.withAppendedId(MediaStore.Downloads.EXTERNAL_CONTENT_URI, id);
                     out.add(new Item(uri, name, modified));
                 }
             }
         } catch (Exception ignored) {}
-
         return out;
     }
 
-    private static Uri findUri(Context context, String displayName) {
+    public static byte[] readBytes(Context context, String displayName, int maxBytes) throws Exception {
+        Uri uri = findUri(context, displayName);
+        if (uri == null) return null;
+        try (InputStream in = context.getContentResolver().openInputStream(uri);
+             ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            if (in == null) return null;
+            byte[] buf = new byte[32 * 1024];
+            int total = 0;
+            int n;
+            while ((n = in.read(buf)) >= 0) {
+                if (n == 0) continue;
+                total += n;
+                if (total > maxBytes) throw new IllegalStateException("XLSX ใหญ่เกินขนาดส่งเมลที่กำหนด");
+                out.write(buf, 0, n);
+            }
+            return out.toByteArray();
+        }
+    }
+
+    public static Uri findUri(Context context, String displayName) {
         ContentResolver r = context.getContentResolver();
         String[] projection = { MediaStore.Downloads._ID };
         String selection = MediaStore.Downloads.DISPLAY_NAME + "=?";
         String[] args = { displayName };
 
-        try (Cursor c = r.query(
-                MediaStore.Downloads.EXTERNAL_CONTENT_URI,
-                projection, selection, args, null
-        )) {
+        try (Cursor c = r.query(MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                projection, selection, args, null)) {
             if (c != null && c.moveToFirst()) {
                 long id = c.getLong(0);
-                return ContentUris.withAppendedId(
-                        MediaStore.Downloads.EXTERNAL_CONTENT_URI, id
-                );
+                return ContentUris.withAppendedId(MediaStore.Downloads.EXTERNAL_CONTENT_URI, id);
             }
         }
         return null;
