@@ -44,5 +44,6 @@ android {
 }
 
 dependencies {
+    // Google Identity Services AuthorizationClient for Gmail send-only OAuth.
     implementation "com.google.android.gms:play-services-auth:21.5.0"
 }
