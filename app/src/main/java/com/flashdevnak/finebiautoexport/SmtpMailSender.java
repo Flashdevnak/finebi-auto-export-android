@@ -100,13 +100,13 @@ public final class SmtpMailSender {
         out.flush();
         int code = readCode(in);
         for (int e : expected) if (code == e) return;
-        throw new IllegalStateException("SMTP " + code + " after " + value.replaceAll("[^A-Za-z ]", "*").substring(0, Math.min(value.length(), 20)));
+        throw new IllegalStateException("SMTP command failed: " + code);
     }
 
     private static void expect(BufferedReader in, int... expected) throws Exception {
         int code = readCode(in);
         for (int e : expected) if (code == e) return;
-        throw new IllegalStateException("SMTP " + code);
+        throw new IllegalStateException("SMTP response: " + code);
     }
 
     private static int readCode(BufferedReader in) throws Exception {
