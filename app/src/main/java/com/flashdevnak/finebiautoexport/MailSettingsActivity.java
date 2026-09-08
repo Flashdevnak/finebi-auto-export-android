@@ -143,6 +143,7 @@ public final class MailSettingsActivity extends Activity {
             MailManager.sendTest(this, (ok, message) -> runOnUiThread(() -> {
                 status.setText(message);
                 status.setTextColor(ok ? UiKit.GREEN : UiKit.RED);
+                refreshGoogleUi();
             }));
         });
         body.addView(test, UiKit.full(this, 9));
@@ -218,14 +219,20 @@ public final class MailSettingsActivity extends Activity {
     }
 
     private void connectGoogle() {
-        connectButton.setText("กำลังเปิด Google...");
-        googleStatus.setText("กำลังรอการยืนยันบัญชี");
+        boolean reauthorize = MailSettings.authRequired(this)
+                && MailSettings.get(this).getBoolean(MailSettings.GOOGLE_CONNECTED, false);
+
+        connectButton.setText(reauthorize ? "กำลังยืนยันสิทธิ์..." : "กำลังเปิด Google...");
+        googleStatus.setText(reauthorize ? "กำลังยืนยันสิทธิ์บัญชีเดิม" : "กำลังรอการยืนยันบัญชี");
         googleStatus.setTextColor(UiKit.AMBER);
-        GoogleOAuthManager.connect(this, new GoogleOAuthManager.ConnectCallback() {
+
+        GoogleOAuthManager.ConnectCallback callback = new GoogleOAuthManager.ConnectCallback() {
             @Override public void onConnected(String email) {
                 runOnUiThread(() -> {
                     refreshGoogleUi();
-                    status.setText("เชื่อมต่อบัญชี Google สำเร็จ");
+                    status.setText(reauthorize
+                            ? "ยืนยันสิทธิ์บัญชี Google สำเร็จ"
+                            : "เชื่อมต่อบัญชี Google สำเร็จ");
                     status.setTextColor(UiKit.GREEN);
                     MailManager.kick(MailSettingsActivity.this);
                 });
@@ -238,7 +245,10 @@ public final class MailSettingsActivity extends Activity {
                     status.setTextColor(UiKit.RED);
                 });
             }
-        });
+        };
+
+        if (reauthorize) GoogleOAuthManager.reconnect(this, callback);
+        else GoogleOAuthManager.connect(this, callback);
     }
 
     @Override
@@ -254,11 +264,16 @@ public final class MailSettingsActivity extends Activity {
 
     private void refreshGoogleUi() {
         boolean connected = MailSettings.get(this).getBoolean(MailSettings.GOOGLE_CONNECTED, false);
+        boolean authRequired = MailSettings.authRequired(this);
         googleStatus.setText(googleStatusText());
-        googleStatus.setTextColor(connected ? UiKit.GREEN : UiKit.AMBER);
+        googleStatus.setTextColor(authRequired ? UiKit.AMBER : (connected ? UiKit.GREEN : UiKit.AMBER));
         connectButton.setText(connectButtonText());
         if (disconnectButton != null) {
             disconnectButton.setVisibility(connected ? View.VISIBLE : View.GONE);
+        }
+        if (status != null) {
+            status.setText(currentStatus());
+            status.setTextColor(authRequired ? UiKit.AMBER : UiKit.TEXT);
         }
     }
 
@@ -266,12 +281,13 @@ public final class MailSettingsActivity extends Activity {
         boolean connected = MailSettings.get(this).getBoolean(MailSettings.GOOGLE_CONNECTED, false);
         if (!connected) return "ยังไม่ได้เชื่อมต่อบัญชีผู้ส่ง";
         String email = MailSettings.get(this).getString(MailSettings.GOOGLE_EMAIL, "");
-        return email == null || email.isEmpty() ? "เชื่อมต่อบัญชีแล้ว" : email;
+        String account = email == null || email.isEmpty() ? "เชื่อมต่อบัญชีแล้ว" : email;
+        if (MailSettings.authRequired(this)) return account + " • ต้องยืนยันสิทธิ์อีกครั้ง";
+        return account;
     }
 
     private String connectButtonText() {
-        String s = MailSettings.get(this).getString(MailSettings.STATUS, "");
-        if (s != null && s.startsWith("AUTH_REQUIRED")) return "เชื่อมต่อบัญชี Google ใหม่";
+        if (MailSettings.authRequired(this)) return "ยืนยันสิทธิ์บัญชี Google";
         return MailSettings.get(this).getBoolean(MailSettings.GOOGLE_CONNECTED, false)
                 ? "เปลี่ยนบัญชีผู้ส่ง"
                 : "เชื่อมต่อบัญชี Google";
@@ -290,7 +306,7 @@ public final class MailSettingsActivity extends Activity {
         MailSettings.saveRecipients(this, enabled.isChecked(), t, c);
         if (toast) Toast.makeText(this, "บันทึกการตั้งค่าแล้ว", Toast.LENGTH_SHORT).show();
         status.setText(currentStatus());
-        status.setTextColor(UiKit.TEXT);
+        status.setTextColor(MailSettings.authRequired(this) ? UiKit.AMBER : UiKit.TEXT);
         if (MailSettings.enabled(this)) MailManager.kick(this);
         return true;
     }
@@ -313,7 +329,7 @@ public final class MailSettingsActivity extends Activity {
         String s = MailSettings.get(this).getString(MailSettings.STATUS, "");
         boolean connected = MailSettings.get(this).getBoolean(MailSettings.GOOGLE_CONNECTED, false);
         if (!connected) return "รอเชื่อมต่อบัญชีผู้ส่ง";
-        if (s != null && s.startsWith("AUTH_REQUIRED")) return "ต้องเชื่อมต่อบัญชี Google ใหม่";
+        if (MailSettings.authRequired(this)) return "บัญชีผู้ส่งยังถูกบันทึกไว้ • กรุณายืนยันสิทธิ์ Google อีกครั้ง";
         if (!MailSettings.configured(this)) return "เชื่อมต่อบัญชีแล้ว • รอกำหนดผู้รับรายงาน";
         if (!MailSettings.get(this).getBoolean(MailSettings.ENABLED, false)) {
             return "ตั้งค่าครบแล้ว • ปิดการส่งอัตโนมัติ";
