@@ -31,6 +31,13 @@ public final class MailManager {
         if (!NetworkHelper.isOnline(app)) return;
 
         SharedPreferences p = MailSettings.get(app);
+        String status = p.getString(MailSettings.STATUS, "");
+        if (status != null && status.startsWith("AUTH_REQUIRED")) {
+            // Keep the account and queued report intact. Wait for the user to
+            // confirm Google permission once instead of repeatedly retrying.
+            return;
+        }
+
         String version = p.getString(MailSettings.PENDING_VERSION, "");
         String fileName = p.getString(MailSettings.PENDING_FILE, "");
         long next = p.getLong(MailSettings.NEXT_RETRY_AT, 0L);
@@ -83,7 +90,7 @@ public final class MailManager {
             MailSettings.markSent(app, version);
         } catch (GmailApiSender.GmailHttpException e) {
             if (e.code == 401 || e.code == 403) {
-                MailSettings.markAuthRequired(app, "สิทธิ์ Gmail ต้องอนุญาตใหม่");
+                MailSettings.markAuthRequired(app, "Google ต้องการยืนยันสิทธิ์การส่งอีเมลอีกครั้ง");
             } else {
                 MailSettings.markFailure(app, e.getMessage());
             }
@@ -100,6 +107,10 @@ public final class MailManager {
         Context app = activity.getApplicationContext();
         if (!MailSettings.configured(app)) {
             if (listener != null) listener.onResult(false, "เชื่อมต่อ Google และกรอกผู้รับก่อน");
+            return;
+        }
+        if (MailSettings.authRequired(app)) {
+            if (listener != null) listener.onResult(false, "กรุณายืนยันสิทธิ์บัญชี Google ก่อนส่งทดสอบ");
             return;
         }
         if (!NetworkHelper.isOnline(app)) {
@@ -129,7 +140,7 @@ public final class MailManager {
                         if (listener != null) listener.onResult(true, "ส่งอีเมลทดสอบสำเร็จ");
                     } catch (GmailApiSender.GmailHttpException e) {
                         if (e.code == 401 || e.code == 403) {
-                            MailSettings.markAuthRequired(app, "สิทธิ์ Gmail ต้องอนุญาตใหม่");
+                            MailSettings.markAuthRequired(app, "Google ต้องการยืนยันสิทธิ์การส่งอีเมลอีกครั้ง");
                         }
                         if (listener != null) listener.onResult(false, "ส่งไม่สำเร็จ: " + e.getMessage());
                     } catch (Exception e) {
