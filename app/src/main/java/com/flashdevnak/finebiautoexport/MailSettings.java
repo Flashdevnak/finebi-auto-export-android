@@ -7,10 +7,10 @@ public final class MailSettings {
     private static final String FILE = "finebi_mail_settings";
 
     public static final String ENABLED = "enabled";
-    public static final String SENDER = "sender";
     public static final String TO = "to";
     public static final String CC = "cc";
-    private static final String APP_PASSWORD_ENCRYPTED = "app_password_encrypted";
+    public static final String GOOGLE_CONNECTED = "google_connected";
+    public static final String GOOGLE_EMAIL = "google_email";
 
     public static final String PENDING_VERSION = "pending_version";
     public static final String PENDING_FILE = "pending_file";
@@ -28,39 +28,56 @@ public final class MailSettings {
 
     public static boolean configured(Context c) {
         SharedPreferences p = get(c);
-        return !p.getString(SENDER, "").trim().isEmpty()
-                && !p.getString(TO, "").trim().isEmpty()
-                && !p.getString(APP_PASSWORD_ENCRYPTED, "").isEmpty();
+        return p.getBoolean(GOOGLE_CONNECTED, false)
+                && !p.getString(TO, "").trim().isEmpty();
     }
 
     public static boolean enabled(Context c) {
         return get(c).getBoolean(ENABLED, false) && configured(c);
     }
 
-    public static void save(
+    public static void saveRecipients(
             Context c,
             boolean enabled,
-            String sender,
             String to,
-            String cc,
-            String newAppPassword
-    ) throws Exception {
-        SharedPreferences.Editor e = get(c).edit()
+            String cc
+    ) {
+        get(c).edit()
                 .putBoolean(ENABLED, enabled)
-                .putString(SENDER, clean(sender))
                 .putString(TO, clean(to))
-                .putString(CC, clean(cc));
-        if (newAppPassword != null && !newAppPassword.trim().isEmpty()) {
-            e.putString(
-                    APP_PASSWORD_ENCRYPTED,
-                    SecretStore.encrypt(newAppPassword.replace(" ", "").trim())
-            );
-        }
-        e.apply();
+                .putString(CC, clean(cc))
+                .apply();
+        // Remove legacy SMTP secrets/settings after migration to OAuth.
+        get(c).edit()
+                .remove("sender")
+                .remove("app_password_encrypted")
+                .apply();
     }
 
-    public static String appPassword(Context c) throws Exception {
-        return SecretStore.decrypt(get(c).getString(APP_PASSWORD_ENCRYPTED, ""));
+    public static void markGoogleConnected(Context c, String email) {
+        get(c).edit()
+                .putBoolean(GOOGLE_CONNECTED, true)
+                .putString(GOOGLE_EMAIL, email == null ? "" : email)
+                .putString(STATUS, "GOOGLE_CONNECTED")
+                .apply();
+    }
+
+    public static void markGoogleDisconnected(Context c) {
+        get(c).edit()
+                .putBoolean(GOOGLE_CONNECTED, false)
+                .putString(GOOGLE_EMAIL, "")
+                .putBoolean(ENABLED, false)
+                .putString(STATUS, "GOOGLE_DISCONNECTED")
+                .apply();
+    }
+
+    public static void markAuthRequired(Context c, String reason) {
+        String safe = reason == null ? "" : reason;
+        if (safe.length() > 160) safe = safe.substring(0, 160);
+        get(c).edit()
+                .putString(STATUS, "AUTH_REQUIRED" + (safe.isEmpty() ? "" : " • " + safe))
+                .putLong(NEXT_RETRY_AT, 0L)
+                .apply();
     }
 
     public static void queue(Context c, String version, String fileName) {
