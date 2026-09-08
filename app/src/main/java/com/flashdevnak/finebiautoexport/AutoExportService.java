@@ -269,7 +269,6 @@ public final class AutoExportService extends Service {
         if (stopping) return;
         Prefs.touchServiceHeartbeat(this);
         MailManager.kick(this);
-        UpdateManager.maybeCheckAndNotify(this);
 
         if (!NetworkHelper.isOnline(this)) {
             consecutiveErrors = 0;
