@@ -13,13 +13,7 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
-/**
- * Dedicated FineBI browser.
- *
- * Important: this Activity intentionally contains NO Status/Files navigation.
- * DailyMainActivity is the single owner of the app dashboard. This prevents
- * Android task/back-stack returns from ever revealing the retired legacy UI.
- */
+/** Dedicated FineBI workspace. DailyMainActivity remains the sole dashboard. */
 public final class MainActivity extends Activity {
     private WebView webView;
     private TextView sessionStatus;
@@ -43,11 +37,8 @@ public final class MainActivity extends Activity {
 
     @Override
     public void onBackPressed() {
-        if (webView != null && webView.canGoBack()) {
-            webView.goBack();
-        } else {
-            finish();
-        }
+        if (webView != null && webView.canGoBack()) webView.goBack();
+        else finish();
     }
 
     @Override
@@ -72,9 +63,7 @@ public final class MainActivity extends Activity {
         View divider = new View(this);
         divider.setBackgroundColor(UiKit.BORDER);
         root.addView(divider, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(1)
-        ));
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(1)));
 
         webView = WebViewFactory.create(
                 this,
@@ -83,7 +72,7 @@ public final class MainActivity extends Activity {
                     public void onPageStarted(String url) {
                         Prefs.setStatus(MainActivity.this, "WEBVIEW", "กำลังเปิด FineBI");
                         runOnUiThread(() -> {
-                            sessionStatus.setText("กำลังโหลด...");
+                            sessionStatus.setText("กำลังเชื่อมต่อ FineBI");
                             sessionStatus.setTextColor(UiKit.MUTED);
                         });
                     }
@@ -99,7 +88,7 @@ public final class MainActivity extends Activity {
                     @Override
                     public void onSessionCaptured() {
                         runOnUiThread(() -> {
-                            sessionStatus.setText("Session พร้อม");
+                            sessionStatus.setText("เชื่อมต่อแล้ว");
                             sessionStatus.setTextColor(UiKit.GREEN);
                             Prefs.setStatus(MainActivity.this, "RUNNING", "FineBI session พร้อม");
                             if (Prefs.get(MainActivity.this).getBoolean(Prefs.ENABLED, false)) {
@@ -111,11 +100,11 @@ public final class MainActivity extends Activity {
                     @Override
                     public void onMainFrameError(String description) {
                         runOnUiThread(() -> {
-                            sessionStatus.setText("เข้า FineBI ไม่ได้");
+                            sessionStatus.setText("เชื่อมต่อ FineBI ไม่สำเร็จ");
                             sessionStatus.setTextColor(UiKit.RED);
                             Toast.makeText(
                                     MainActivity.this,
-                                    "FineBI เข้าไม่ได้ — ตรวจ Flashlink",
+                                    "ไม่สามารถเชื่อมต่อ FineBI ได้ กรุณาตรวจสอบ Flashlink",
                                     Toast.LENGTH_SHORT
                             ).show();
                         });
@@ -132,7 +121,7 @@ public final class MainActivity extends Activity {
                             refreshSessionStatus();
                             Toast.makeText(
                                     MainActivity.this,
-                                    "บันทึก Export Template แล้ว",
+                                    "บันทึกรูปแบบการส่งออกเรียบร้อยแล้ว",
                                     Toast.LENGTH_SHORT
                             ).show();
                         });
@@ -145,7 +134,7 @@ public final class MainActivity extends Activity {
                     public void onTemplateCaptureError(String message) {
                         runOnUiThread(() -> Toast.makeText(
                                 MainActivity.this,
-                                "จับ Export template ไม่สำเร็จ: " + message,
+                                "ไม่สามารถบันทึกรูปแบบการส่งออกได้: " + message,
                                 Toast.LENGTH_LONG
                         ).show());
                     }
@@ -154,11 +143,7 @@ public final class MainActivity extends Activity {
         );
 
         root.addView(webView, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                0,
-                1f
-        ));
-
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
         setContentView(root);
     }
 
@@ -166,13 +151,13 @@ public final class MainActivity extends Activity {
         LinearLayout bar = new LinearLayout(this);
         bar.setOrientation(LinearLayout.HORIZONTAL);
         bar.setGravity(Gravity.CENTER_VERTICAL);
-        bar.setPadding(dp(12), dp(8), dp(12), dp(8));
+        bar.setPadding(dp(12), dp(10), dp(12), dp(10));
         bar.setBackgroundColor(UiKit.NAVY);
 
-        TextView back = UiKit.text(this, "‹  สถานะ", 13, Color.WHITE, true);
+        TextView back = UiKit.text(this, "‹  ภาพรวม", 13, Color.WHITE, true);
         back.setGravity(Gravity.CENTER);
-        back.setPadding(dp(10), dp(8), dp(10), dp(8));
-        back.setBackground(UiKit.rounded(Color.argb(45, 255, 255, 255), 10, this));
+        back.setPadding(dp(11), dp(8), dp(11), dp(8));
+        back.setBackground(UiKit.rounded(Color.argb(42, 255, 255, 255), 11, this));
         back.setClickable(true);
         back.setOnClickListener(v -> finish());
         bar.addView(back);
@@ -180,21 +165,18 @@ public final class MainActivity extends Activity {
         LinearLayout labels = new LinearLayout(this);
         labels.setOrientation(LinearLayout.VERTICAL);
         labels.setPadding(dp(12), 0, 0, 0);
-        labels.addView(UiKit.text(this, "FineBI", 16, Color.WHITE, true));
-        labels.addView(UiKit.text(
-                this,
-                "HUB Departure Monitor",
+        labels.addView(UiKit.text(this, "FineBI Workspace", 16, Color.WHITE, true));
+        TextView sub = UiKit.text(this,
+                "เข้าสู่ระบบและเตรียมรูปแบบการส่งออก",
                 10,
-                Color.rgb(191, 201, 216),
-                false
-        ));
+                Color.rgb(203, 213, 225),
+                false);
+        sub.setPadding(0, dp(2), 0, 0);
+        labels.addView(sub);
         bar.addView(labels, new LinearLayout.LayoutParams(
-                0,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                1f
-        ));
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
-        TextView badge = UiKit.text(this, "SELECT ALL", 9, Color.WHITE, true);
+        TextView badge = UiKit.text(this, "HUB • ALL", 9, Color.WHITE, true);
         badge.setGravity(Gravity.CENTER);
         badge.setPadding(dp(8), dp(5), dp(8), dp(5));
         badge.setBackground(UiKit.rounded(UiKit.BLUE, 20, this));
@@ -206,22 +188,19 @@ public final class MainActivity extends Activity {
         LinearLayout toolbar = new LinearLayout(this);
         toolbar.setOrientation(LinearLayout.HORIZONTAL);
         toolbar.setGravity(Gravity.CENTER_VERTICAL);
-        toolbar.setPadding(dp(12), dp(8), dp(12), dp(8));
-        toolbar.setBackgroundColor(Color.WHITE);
+        toolbar.setPadding(dp(12), dp(9), dp(12), dp(9));
+        toolbar.setBackgroundColor(UiKit.BG);
 
         LinearLayout status = new LinearLayout(this);
         status.setOrientation(LinearLayout.VERTICAL);
-        status.addView(UiKit.text(this, "FineBI Browser", 13, UiKit.TEXT, true));
-        sessionStatus = UiKit.text(this, "รอ Session", 10, UiKit.MUTED, false);
-        sessionStatus.setPadding(0, dp(2), 0, 0);
+        status.addView(UiKit.text(this, "สถานะการเชื่อมต่อ", 12, UiKit.TEXT, true));
+        sessionStatus = UiKit.text(this, "กำลังตรวจสอบ", 10, UiKit.MUTED, false);
+        sessionStatus.setPadding(0, dp(3), 0, 0);
         status.addView(sessionStatus);
         toolbar.addView(status, new LinearLayout.LayoutParams(
-                0,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                1f
-        ));
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
-        TextView reload = compactButton("Reload");
+        TextView reload = compactButton("โหลดใหม่");
         reload.setOnClickListener(v -> {
             if (webView != null) webView.loadUrl(FineBiConfig.ENTRY_URL);
         });
@@ -230,13 +209,12 @@ public final class MainActivity extends Activity {
         TextView flashlink = compactButton("Flashlink");
         flashlink.setOnClickListener(v -> {
             if (!FlashlinkHelper.open(this)) {
-                Toast.makeText(this, "เปิด Flashlink ไม่สำเร็จ", Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, "ไม่สามารถเปิด Flashlink ได้", Toast.LENGTH_SHORT).show();
             }
         });
         LinearLayout.LayoutParams fp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-        );
+                ViewGroup.LayoutParams.WRAP_CONTENT);
         fp.leftMargin = dp(7);
         toolbar.addView(flashlink, fp);
         return toolbar;
@@ -245,8 +223,8 @@ public final class MainActivity extends Activity {
     private TextView compactButton(String label) {
         TextView b = UiKit.text(this, label, 11, UiKit.TEXT, true);
         b.setGravity(Gravity.CENTER);
-        b.setPadding(dp(10), dp(7), dp(10), dp(7));
-        b.setBackground(UiKit.outlined(Color.WHITE, UiKit.BORDER, 9, this));
+        b.setPadding(dp(11), dp(8), dp(11), dp(8));
+        b.setBackground(UiKit.outlined(Color.WHITE, UiKit.BORDER, 10, this));
         b.setClickable(true);
         return b;
     }
@@ -255,11 +233,11 @@ public final class MainActivity extends Activity {
         if (sessionStatus == null) return;
         if (SessionStore.isReady()) {
             sessionStatus.setText(TemplateStore.isReady(this)
-                    ? "Session + Template พร้อม"
-                    : "Session พร้อม • รอ Export Template");
+                    ? "เชื่อมต่อแล้ว • รูปแบบการส่งออกพร้อม"
+                    : "เชื่อมต่อแล้ว • รอ Export Excel ครั้งแรก");
             sessionStatus.setTextColor(UiKit.GREEN);
         } else {
-            sessionStatus.setText("รอ Login / Session");
+            sessionStatus.setText("รอเข้าสู่ระบบ FineBI");
             sessionStatus.setTextColor(UiKit.AMBER);
         }
     }
