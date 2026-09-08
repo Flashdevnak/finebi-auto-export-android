@@ -15,6 +15,7 @@ import android.content.pm.Signature;
 import android.net.Uri;
 import android.os.Build;
 import android.provider.Settings;
+import android.widget.Toast;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -72,6 +73,7 @@ public final class UpdateManager {
 
     private static volatile boolean checking;
     private static volatile boolean downloading;
+    private static volatile boolean permissionResumePolling;
 
     private UpdateManager() {}
 
@@ -133,34 +135,92 @@ public final class UpdateManager {
                 && !activity.getPackageManager().canRequestPackageInstalls()) {
             activity.getSharedPreferences(PREF, Context.MODE_PRIVATE)
                     .edit().putBoolean(K_PENDING, true).apply();
+            emit(activity, listener, info,
+                    "เปิดอนุญาตติดตั้งจากแอปนี้ แล้วกดย้อนกลับ • แอปจะอัปเดตต่ออัตโนมัติ",
+                    true);
             Intent settings = new Intent(
                     Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
                     Uri.parse("package:" + activity.getPackageName())
             );
             activity.startActivity(settings);
-            if (listener != null) {
-                listener.onChanged(info, "อนุญาตติดตั้งแอปจากแหล่งนี้ 1 ครั้ง แล้วกลับเข้าแอป");
-            }
             return;
         }
 
         activity.getSharedPreferences(PREF, Context.MODE_PRIVATE)
                 .edit().putBoolean(K_PENDING, false).apply();
+        emit(activity, listener, info, "เริ่มดาวน์โหลดอัปเดต v" + info.version, true);
         downloadAndInstall(activity, info, listener);
     }
 
     public static void resumePendingInstall(Activity activity, Listener listener) {
         SharedPreferences p = activity.getSharedPreferences(PREF, Context.MODE_PRIVATE);
         if (!p.getBoolean(K_PENDING, false)) return;
-        if (Build.VERSION.SDK_INT >= 26
-                && !activity.getPackageManager().canRequestPackageInstalls()) return;
+
         Info info = cached(activity);
         if (!info.available || info.url.isEmpty()) {
             p.edit().putBoolean(K_PENDING, false).apply();
             return;
         }
+
+        if (Build.VERSION.SDK_INT >= 26
+                && !activity.getPackageManager().canRequestPackageInstalls()) {
+            pollPermissionAfterReturn(activity, listener, info);
+            return;
+        }
+
+        permissionResumePolling = false;
         p.edit().putBoolean(K_PENDING, false).apply();
+        emit(activity, listener, info,
+                "อนุญาตติดตั้งแล้ว • กำลังดาวน์โหลด v" + info.version,
+                true);
         downloadAndInstall(activity, info, listener);
+    }
+
+    /**
+     * Some Android/Samsung builds report canRequestPackageInstalls=false for a
+     * short moment immediately after returning from the system settings page.
+     * Retry briefly so the user does not have to press Update a second time.
+     */
+    private static void pollPermissionAfterReturn(Activity activity, Listener listener, Info info) {
+        if (permissionResumePolling) return;
+        permissionResumePolling = true;
+        emit(activity, listener, info, "กำลังตรวจสิทธิ์ติดตั้ง...", false);
+
+        new Thread(() -> {
+            boolean granted = false;
+            try {
+                for (int i = 0; i < 8; i++) {
+                    if (Build.VERSION.SDK_INT < 26
+                            || activity.getPackageManager().canRequestPackageInstalls()) {
+                        granted = true;
+                        break;
+                    }
+                    Thread.sleep(350L);
+                }
+            } catch (Exception ignored) {
+            }
+
+            final boolean ready = granted;
+            activity.runOnUiThread(() -> {
+                permissionResumePolling = false;
+                if (activity.isFinishing()
+                        || (Build.VERSION.SDK_INT >= 17 && activity.isDestroyed())) {
+                    return;
+                }
+
+                SharedPreferences p = activity.getSharedPreferences(PREF, Context.MODE_PRIVATE);
+                if (!p.getBoolean(K_PENDING, false)) return;
+
+                if (ready || Build.VERSION.SDK_INT < 26
+                        || activity.getPackageManager().canRequestPackageInstalls()) {
+                    resumePendingInstall(activity, listener);
+                } else {
+                    emit(activity, listener, info,
+                            "ยังไม่ได้เปิดสิทธิ์ติดตั้ง • กดอัปเดตเพื่อเปิดหน้าตั้งค่าอีกครั้ง",
+                            true);
+                }
+            });
+        }, "FineBI-UpdatePermissionResume").start();
     }
 
     private static Info fetchLatest(Context context) throws Exception {
@@ -206,10 +266,11 @@ public final class UpdateManager {
 
     private static void downloadAndInstall(Activity activity, Info info, Listener listener) {
         if (downloading) {
-            if (listener != null) listener.onChanged(info, "กำลังดาวน์โหลดอัปเดตอยู่");
+            emit(activity, listener, info, "กำลังดาวน์โหลดอัปเดตอยู่ • รอสักครู่", true);
             return;
         }
         downloading = true;
+        notifyProgress(activity, "กำลังดาวน์โหลดอัปเดต", "FineBI Auto Export v" + info.version);
 
         new Thread(() -> {
             try {
@@ -220,15 +281,20 @@ public final class UpdateManager {
                 }
                 File apk = new File(dir, "FineBI-Auto-Export-v" + info.version + ".apk");
                 download(info.url, apk);
+
+                notifyProgress(activity, "กำลังตรวจอัปเดต", "ตรวจ package และลายเซ็น APK");
+                if (listener != null) listener.onChanged(info, "ดาวน์โหลดเสร็จ • กำลังตรวจลายเซ็น");
                 verifyApk(activity, apk);
-                if (listener != null) listener.onChanged(info, "ดาวน์โหลดและตรวจลายเซ็นผ่าน • กำลังเปิดตัวติดตั้ง");
+
+                notifyProgress(activity, "พร้อมติดตั้ง", "กำลังเปิดหน้าติดตั้ง v" + info.version);
+                if (listener != null) listener.onChanged(info,
+                        "ดาวน์โหลดและตรวจลายเซ็นผ่าน • กำลังเปิดตัวติดตั้ง");
                 commitInstall(activity, apk);
             } catch (Exception e) {
-                if (listener != null) {
-                    listener.onChanged(info,
-                            "อัปเดตไม่สำเร็จ: " + e.getClass().getSimpleName()
-                                    + (e.getMessage() == null ? "" : " • " + e.getMessage()));
-                }
+                String message = "อัปเดตไม่สำเร็จ: " + e.getClass().getSimpleName()
+                        + (e.getMessage() == null ? "" : " • " + e.getMessage());
+                notifyProgress(activity, "อัปเดตไม่สำเร็จ", message);
+                emit(activity, listener, info, message, true);
             } finally {
                 downloading = false;
             }
@@ -305,6 +371,9 @@ public final class UpdateManager {
         PackageInstaller.SessionParams params =
                 new PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL);
         params.setAppPackageName(context.getPackageName());
+        if (Build.VERSION.SDK_INT >= 31) {
+            params.setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_REQUIRED);
+        }
         int sessionId = installer.createSession(params);
 
         try (PackageInstaller.Session session = installer.openSession(sessionId);
@@ -331,15 +400,7 @@ public final class UpdateManager {
 
     public static void notifyUpdate(Context context, Info info) {
         NotificationManager nm = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
-        if (Build.VERSION.SDK_INT >= 26) {
-            NotificationChannel ch = new NotificationChannel(
-                    UPDATE_CHANNEL,
-                    "FineBI App Updates",
-                    NotificationManager.IMPORTANCE_DEFAULT
-            );
-            ch.setDescription("แจ้งเตือนเมื่อ FineBI Auto Export มีเวอร์ชันใหม่");
-            nm.createNotificationChannel(ch);
-        }
+        ensureUpdateChannel(context, nm);
 
         Intent open = new Intent(context, DailyMainActivity.class);
         PendingIntent pi = PendingIntent.getActivity(
@@ -355,6 +416,52 @@ public final class UpdateManager {
                 .setAutoCancel(true)
                 .setContentIntent(pi);
         nm.notify(UPDATE_NOTIFICATION_ID, b.build());
+    }
+
+    private static void notifyProgress(Context context, String title, String text) {
+        NotificationManager nm = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+        if (nm == null) return;
+        ensureUpdateChannel(context, nm);
+        Intent open = new Intent(context, DailyMainActivity.class);
+        PendingIntent pi = PendingIntent.getActivity(
+                context, 32, open,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+        );
+        Notification.Builder b = Build.VERSION.SDK_INT >= 26
+                ? new Notification.Builder(context, UPDATE_CHANNEL)
+                : new Notification.Builder(context);
+        b.setSmallIcon(android.R.drawable.stat_sys_download_done)
+                .setContentTitle(title)
+                .setContentText(text)
+                .setOnlyAlertOnce(true)
+                .setAutoCancel(true)
+                .setContentIntent(pi);
+        nm.notify(UPDATE_NOTIFICATION_ID, b.build());
+    }
+
+    private static void ensureUpdateChannel(Context context, NotificationManager nm) {
+        if (nm == null) return;
+        if (Build.VERSION.SDK_INT >= 26) {
+            NotificationChannel ch = new NotificationChannel(
+                    UPDATE_CHANNEL,
+                    "FineBI App Updates",
+                    NotificationManager.IMPORTANCE_DEFAULT
+            );
+            ch.setDescription("แจ้งเตือนเมื่อ FineBI Auto Export มีเวอร์ชันใหม่");
+            nm.createNotificationChannel(ch);
+        }
+    }
+
+    private static void emit(Activity activity, Listener listener, Info info,
+                             String message, boolean toast) {
+        if (listener != null) listener.onChanged(info, message);
+        if (!toast) return;
+        activity.runOnUiThread(() -> {
+            if (!activity.isFinishing()
+                    && !(Build.VERSION.SDK_INT >= 17 && activity.isDestroyed())) {
+                Toast.makeText(activity, message, Toast.LENGTH_LONG).show();
+            }
+        });
     }
 
     private static String readText(InputStream in, int max) throws Exception {
