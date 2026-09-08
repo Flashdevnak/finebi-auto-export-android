@@ -4,11 +4,13 @@ import android.app.Activity;
 import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentSender;
 
 import com.google.android.gms.auth.api.identity.AuthorizationClient;
 import com.google.android.gms.auth.api.identity.AuthorizationRequest;
 import com.google.android.gms.auth.api.identity.AuthorizationResult;
 import com.google.android.gms.auth.api.identity.Identity;
+import com.google.android.gms.auth.api.identity.RevokeAccessRequest;
 import com.google.android.gms.common.api.Scope;
 
 import java.util.Arrays;
@@ -34,6 +36,10 @@ public final class GoogleOAuthManager {
         void onError(String message);
     }
 
+    public interface DisconnectCallback {
+        void onDone(boolean ok, String message);
+    }
+
     private static volatile ConnectCallback pendingConnectCallback;
 
     private GoogleOAuthManager() {}
@@ -55,13 +61,14 @@ public final class GoogleOAuthManager {
         pendingConnectCallback = callback;
         AuthorizationClient client = Identity.getAuthorizationClient(activity);
         client.authorize(request(true))
-                .addOnSuccessListener(result -> handleInteractiveResult(activity, client, result))
-                .addOnFailureListener(e -> finishConnectError("เชื่อมต่อ Google ไม่สำเร็จ: " + e.getClass().getSimpleName()));
+                .addOnSuccessListener(result -> handleInteractiveResult(activity, result))
+                .addOnFailureListener(e -> finishConnectError(
+                        "เชื่อมต่อ Google ไม่สำเร็จ: " + e.getClass().getSimpleName()
+                ));
     }
 
     private static void handleInteractiveResult(
             Activity activity,
-            AuthorizationClient client,
             AuthorizationResult result
     ) {
         if (result.hasResolution()) {
@@ -79,7 +86,7 @@ public final class GoogleOAuthManager {
                         0,
                         0
                 );
-            } catch (Intent.SendIntentException e) {
+            } catch (IntentSender.SendIntentException e) {
                 finishConnectError("เปิดหน้าต่าง Google ไม่สำเร็จ");
             }
             return;
@@ -158,5 +165,23 @@ public final class GoogleOAuthManager {
                 .addOnFailureListener(e -> callback.onError(
                         "Google authorization error: " + e.getClass().getSimpleName()
                 ));
+    }
+
+    public static void disconnect(Context context, DisconnectCallback callback) {
+        Context app = context.getApplicationContext();
+        RevokeAccessRequest request = RevokeAccessRequest.builder()
+                .setScopes(scopes())
+                .build();
+        Identity.getAuthorizationClient(app)
+                .revokeAccess(request)
+                .addOnSuccessListener(v -> {
+                    MailSettings.markGoogleDisconnected(app);
+                    if (callback != null) callback.onDone(true, "ยกเลิกการเชื่อมต่อ Google แล้ว");
+                })
+                .addOnFailureListener(e -> {
+                    MailSettings.markGoogleDisconnected(app);
+                    if (callback != null) callback.onDone(false,
+                            "ยกเลิกสิทธิ์บน Google ไม่สำเร็จ แต่ล้างการเชื่อมต่อในแอปแล้ว");
+                });
     }
 }
