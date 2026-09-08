@@ -47,7 +47,6 @@ public final class MailSettings {
                 .putString(TO, clean(to))
                 .putString(CC, clean(cc))
                 .apply();
-        // Remove legacy SMTP secrets/settings after migration to OAuth.
         get(c).edit()
                 .remove("sender")
                 .remove("app_password_encrypted")
@@ -75,6 +74,7 @@ public final class MailSettings {
         String safe = reason == null ? "" : reason;
         if (safe.length() > 160) safe = safe.substring(0, 160);
         get(c).edit()
+                .putBoolean(GOOGLE_CONNECTED, false)
                 .putString(STATUS, "AUTH_REQUIRED" + (safe.isEmpty() ? "" : " • " + safe))
                 .putLong(NEXT_RETRY_AT, 0L)
                 .apply();
