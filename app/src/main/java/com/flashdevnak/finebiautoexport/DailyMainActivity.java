@@ -42,6 +42,8 @@ public final class DailyMainActivity extends Activity {
     private TextView dailyValue;
     private TextView updateValue;
     private TextView updateButton;
+    private TextView mailValue;
+    private TextView mailButton;
     private TextView latestFile;
     private TextView primaryAction;
     private TextView batteryButton;
@@ -53,7 +55,6 @@ public final class DailyMainActivity extends Activity {
             try {
                 refreshStatus();
             } catch (Throwable ignored) {
-                // UI refresh must never die permanently because one status source failed.
             } finally {
                 if (!isFinishing()) ui.postDelayed(this, 3000L);
             }
@@ -61,6 +62,8 @@ public final class DailyMainActivity extends Activity {
     };
 
     private final SharedPreferences.OnSharedPreferenceChangeListener prefListener =
+            (prefs, key) -> ui.post(this::safeRefreshStatus);
+    private final SharedPreferences.OnSharedPreferenceChangeListener mailPrefListener =
             (prefs, key) -> ui.post(this::safeRefreshStatus);
 
     @Override protected void onCreate(Bundle savedInstanceState) {
@@ -78,6 +81,7 @@ public final class DailyMainActivity extends Activity {
     @Override protected void onStart() {
         super.onStart();
         Prefs.get(this).registerOnSharedPreferenceChangeListener(prefListener);
+        MailSettings.get(this).registerOnSharedPreferenceChangeListener(mailPrefListener);
     }
 
     @Override protected void onResume() {
@@ -85,10 +89,9 @@ public final class DailyMainActivity extends Activity {
         ui.removeCallbacks(refreshRunnable);
         safeRefreshStatus();
         ui.postDelayed(refreshRunnable, 1000L);
-
-        // If Android sent the user to "Install unknown apps", continue automatically on return.
         UpdateManager.resumePendingInstall(this, this::onUpdateEvent);
         UpdateManager.checkAsync(this, false, this::onUpdateEvent);
+        MailManager.kick(this);
     }
 
     @Override public void onWindowFocusChanged(boolean hasFocus) {
@@ -103,15 +106,12 @@ public final class DailyMainActivity extends Activity {
 
     @Override protected void onStop() {
         Prefs.get(this).unregisterOnSharedPreferenceChangeListener(prefListener);
+        MailSettings.get(this).unregisterOnSharedPreferenceChangeListener(mailPrefListener);
         super.onStop();
     }
 
     private void safeRefreshStatus() {
-        try {
-            refreshStatus();
-        } catch (Throwable ignored) {
-            // Keep the page alive; the 3-second fallback refresh will try again.
-        }
+        try { refreshStatus(); } catch (Throwable ignored) {}
     }
 
     private void onUpdateEvent(UpdateManager.Info info, String message) {
@@ -233,6 +233,18 @@ public final class DailyMainActivity extends Activity {
             }
         });
         body.addView(updateButton, UiKit.full(this, 7));
+
+        LinearLayout mailCard = metricCard(
+                "Auto Email",
+                "กำลังตรวจ",
+                "ส่งหลัง Export + Validate ผ่าน • แนบ XLSX • ไม่ส่งซ้ำรอบเดิม"
+        );
+        mailValue = (TextView) mailCard.getChildAt(1);
+        body.addView(mailCard, UiKit.full(this, 7));
+
+        mailButton = UiKit.button(this, "ตั้งค่าอีเมล", false);
+        mailButton.setOnClickListener(v -> startActivity(new Intent(this, MailSettingsActivity.class)));
+        body.addView(mailButton, UiKit.full(this, 7));
 
         body.addView(UiKit.text(this, "ไฟล์ล่าสุด", 12, UiKit.MUTED, true), UiKit.full(this, 14));
         latestFile = UiKit.text(this, "ยังไม่มีไฟล์", c ? 12 : 14, UiKit.TEXT, true);
@@ -427,6 +439,34 @@ public final class DailyMainActivity extends Activity {
             updateButton.setText("ตรวจอัปเดต");
         }
 
+        boolean mailConfigured = MailSettings.configured(this);
+        boolean mailEnabled = MailSettings.enabled(this);
+        String mailStatus = MailSettings.get(this).getString(MailSettings.STATUS, "");
+        String lastSentVersion = MailSettings.get(this).getString(MailSettings.LAST_SENT_VERSION, "");
+        if (!mailConfigured) {
+            mailValue.setText("ยังไม่ตั้งค่า");
+            mailValue.setTextColor(UiKit.AMBER);
+            mailButton.setText("ตั้งค่าอีเมล");
+        } else if (!mailEnabled) {
+            mailValue.setText("ตั้งค่าแล้ว • ปิดอยู่");
+            mailValue.setTextColor(UiKit.MUTED);
+            mailButton.setText("เปิด/แก้ไขอีเมล");
+        } else if (mailStatus.startsWith("RETRY")) {
+            mailValue.setText(mailStatus);
+            mailValue.setTextColor(UiKit.AMBER);
+            mailButton.setText("ตรวจการตั้งค่าอีเมล");
+        } else if ("SENDING".equals(mailStatus)) {
+            mailValue.setText("กำลังส่ง...");
+            mailValue.setTextColor(UiKit.AMBER);
+            mailButton.setText("การตั้งค่าอีเมล");
+        } else {
+            mailValue.setText(lastSentVersion.isEmpty()
+                    ? "พร้อมส่งอัตโนมัติ"
+                    : "ส่งล่าสุด • " + lastSentVersion);
+            mailValue.setTextColor(UiKit.GREEN);
+            mailButton.setText("การตั้งค่าอีเมล");
+        }
+
         boolean dailyReady = enabled
                 && templateReady
                 && flashInstalled
@@ -485,6 +525,7 @@ public final class DailyMainActivity extends Activity {
         f.append(" • Auto start: หลังเปิดเครื่องและหลังอัปเดตแอป");
         if (nextCheck > 0L) f.append("\nตรวจครั้งถัดไป: ").append(formatTime(nextCheck));
         if (lastPollOk > 0L) f.append("\nFineBI ตอบล่าสุด: ").append(formatTime(lastPollOk));
+        if (mailEnabled) f.append("\nAuto Email: ").append(mailStatus.isEmpty() ? "READY" : mailStatus);
         if (errors > 0) f.append("\nRetry/Error ต่อเนื่อง: ").append(errors);
         if (message != null && !message.isEmpty()) f.append("\n").append(message);
         if (!lastUpdateMessage.isEmpty()) f.append("\nUpdate: ").append(lastUpdateMessage);
