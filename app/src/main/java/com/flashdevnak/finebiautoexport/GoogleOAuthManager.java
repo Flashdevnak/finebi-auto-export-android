@@ -1,5 +1,6 @@
 package com.flashdevnak.finebiautoexport;
 
+import android.accounts.Account;
 import android.app.Activity;
 import android.app.PendingIntent;
 import android.content.Context;
@@ -19,11 +20,16 @@ import java.util.List;
 /**
  * Google Identity Services authorization for Gmail send-only access.
  * Access tokens are short-lived and are never written to disk.
+ *
+ * The selected Google account email is persisted by MailSettings and is used to
+ * bind silent authorization requests to the same device account. This avoids
+ * account ambiguity after an access token expires or after an app update.
  */
 public final class GoogleOAuthManager {
     public static final int REQUEST_AUTHORIZE = 7301;
     public static final String GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send";
     private static final String EMAIL_SCOPE = "email";
+    private static final String GOOGLE_ACCOUNT_TYPE = "com.google";
 
     public interface TokenCallback {
         void onToken(String token);
@@ -48,19 +54,41 @@ public final class GoogleOAuthManager {
         return Arrays.asList(new Scope(GMAIL_SEND_SCOPE), new Scope(EMAIL_SCOPE));
     }
 
-    private static AuthorizationRequest request(boolean forceAccountPicker) {
+    private static AuthorizationRequest request(boolean forceAccountPicker, String accountEmail) {
         AuthorizationRequest.Builder b = AuthorizationRequest.builder()
                 .setRequestedScopes(scopes());
+
         if (forceAccountPicker) {
             b.setPrompt(AuthorizationRequest.Prompt.SELECT_ACCOUNT);
+        } else if (accountEmail != null && !accountEmail.trim().isEmpty()) {
+            b.setAccount(new Account(accountEmail.trim(), GOOGLE_ACCOUNT_TYPE));
         }
         return b.build();
     }
 
+    /** Connect or deliberately change the sender account. */
     public static void connect(Activity activity, ConnectCallback callback) {
+        authorizeInteractive(activity, request(true, null), callback);
+    }
+
+    /** Re-authorize the sender account already selected in the app. */
+    public static void reconnect(Activity activity, ConnectCallback callback) {
+        String email = MailSettings.get(activity).getString(MailSettings.GOOGLE_EMAIL, "");
+        if (email == null || email.trim().isEmpty()) {
+            connect(activity, callback);
+            return;
+        }
+        authorizeInteractive(activity, request(false, email), callback);
+    }
+
+    private static void authorizeInteractive(
+            Activity activity,
+            AuthorizationRequest authorizationRequest,
+            ConnectCallback callback
+    ) {
         pendingConnectCallback = callback;
         AuthorizationClient client = Identity.getAuthorizationClient(activity);
-        client.authorize(request(true))
+        client.authorize(authorizationRequest)
                 .addOnSuccessListener(result -> handleInteractiveResult(activity, result))
                 .addOnFailureListener(e -> finishConnectError(
                         "เชื่อมต่อ Google ไม่สำเร็จ: " + e.getClass().getSimpleName()
@@ -130,10 +158,13 @@ public final class GoogleOAuthManager {
             }
         } catch (Throwable ignored) {}
 
+        // Some re-authorization responses do not repeat the account email.
+        // MailSettings preserves the previously selected sender in that case.
         MailSettings.markGoogleConnected(context, email);
+        String resolvedEmail = MailSettings.get(context).getString(MailSettings.GOOGLE_EMAIL, "");
         ConnectCallback cb = pendingConnectCallback;
         pendingConnectCallback = null;
-        if (cb != null) cb.onConnected(email);
+        if (cb != null) cb.onConnected(resolvedEmail);
     }
 
     private static void finishConnectError(String message) {
@@ -143,21 +174,23 @@ public final class GoogleOAuthManager {
     }
 
     /**
-     * Background/silent token request. If Google requires consent/account selection,
-     * the caller is told to ask the user to reconnect from the app UI.
+     * Background/silent token request bound to the sender account selected by
+     * the user. If Google genuinely requires consent, the caller is told to ask
+     * for a one-tap re-authorization instead of treating the account as removed.
      */
     public static void getAccessTokenSilent(Context context, TokenCallback callback) {
         Context app = context.getApplicationContext();
+        String email = MailSettings.get(app).getString(MailSettings.GOOGLE_EMAIL, "");
         Identity.getAuthorizationClient(app)
-                .authorize(request(false))
+                .authorize(request(false, email))
                 .addOnSuccessListener(result -> {
                     if (result.hasResolution()) {
-                        callback.onUserActionRequired("ต้องเปิดแอปแล้วกด เชื่อมต่อ Google อีกครั้ง");
+                        callback.onUserActionRequired("Google ต้องการยืนยันสิทธิ์การส่งอีเมลอีกครั้ง");
                         return;
                     }
                     String token = result.getAccessToken();
                     if (token == null || token.isEmpty()) {
-                        callback.onUserActionRequired("สิทธิ์ Gmail หมดอายุ • เชื่อมต่อ Google ใหม่");
+                        callback.onUserActionRequired("Google ต้องการยืนยันสิทธิ์การส่งอีเมลอีกครั้ง");
                         return;
                     }
                     callback.onToken(token);
@@ -169,11 +202,14 @@ public final class GoogleOAuthManager {
 
     public static void disconnect(Context context, DisconnectCallback callback) {
         Context app = context.getApplicationContext();
-        RevokeAccessRequest request = RevokeAccessRequest.builder()
-                .setScopes(scopes())
-                .build();
+        String email = MailSettings.get(app).getString(MailSettings.GOOGLE_EMAIL, "");
+        RevokeAccessRequest.Builder builder = RevokeAccessRequest.builder()
+                .setScopes(scopes());
+        if (email != null && !email.trim().isEmpty()) {
+            builder.setAccount(new Account(email.trim(), GOOGLE_ACCOUNT_TYPE));
+        }
         Identity.getAuthorizationClient(app)
-                .revokeAccess(request)
+                .revokeAccess(builder.build())
                 .addOnSuccessListener(v -> {
                     MailSettings.markGoogleDisconnected(app);
                     if (callback != null) callback.onDone(true, "ยกเลิกการเชื่อมต่อ Google แล้ว");
