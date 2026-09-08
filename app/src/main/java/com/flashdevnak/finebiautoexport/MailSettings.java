@@ -23,7 +23,25 @@ public final class MailSettings {
     private MailSettings() {}
 
     public static SharedPreferences get(Context c) {
-        return c.getSharedPreferences(FILE, Context.MODE_PRIVATE);
+        SharedPreferences p = c.getSharedPreferences(FILE, Context.MODE_PRIVATE);
+        migrateAuthRequiredConnection(p);
+        return p;
+    }
+
+    /**
+     * v0.8.2 migration: older builds marked GOOGLE_CONNECTED=false whenever a
+     * temporary OAuth resolution was needed, even though the selected sender
+     * email remained stored. Restore that identity without fabricating a token;
+     * sending stays paused by AUTH_REQUIRED until Google confirms permission.
+     */
+    private static void migrateAuthRequiredConnection(SharedPreferences p) {
+        if (p.getBoolean(GOOGLE_CONNECTED, false)) return;
+        String status = p.getString(STATUS, "");
+        String email = p.getString(GOOGLE_EMAIL, "");
+        if (status != null && status.startsWith("AUTH_REQUIRED")
+                && email != null && !email.trim().isEmpty()) {
+            p.edit().putBoolean(GOOGLE_CONNECTED, true).apply();
+        }
     }
 
     public static boolean configured(Context c) {
