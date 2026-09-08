@@ -10,9 +10,12 @@ import android.view.ViewGroup;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
+/** Shared visual language for the production UI. */
 public final class UiKit {
-    public static final int NAVY = Color.rgb(17, 24, 39);
+    public static final int NAVY = Color.rgb(15, 23, 42);
+    public static final int NAVY_SOFT = Color.rgb(30, 41, 59);
     public static final int BLUE = Color.rgb(37, 99, 235);
+    public static final int BLUE_DARK = Color.rgb(29, 78, 216);
     public static final int BLUE_SOFT = Color.rgb(239, 246, 255);
     public static final int GREEN = Color.rgb(22, 163, 74);
     public static final int GREEN_SOFT = Color.rgb(240, 253, 244);
@@ -20,11 +23,11 @@ public final class UiKit {
     public static final int AMBER_SOFT = Color.rgb(255, 251, 235);
     public static final int RED = Color.rgb(220, 38, 38);
     public static final int RED_SOFT = Color.rgb(254, 242, 242);
-    public static final int TEXT = Color.rgb(31, 41, 55);
-    public static final int MUTED = Color.rgb(107, 114, 128);
-    public static final int BORDER = Color.rgb(229, 231, 235);
+    public static final int TEXT = Color.rgb(15, 23, 42);
+    public static final int MUTED = Color.rgb(100, 116, 139);
+    public static final int BORDER = Color.rgb(226, 232, 240);
     public static final int SURFACE = Color.WHITE;
-    public static final int BG = Color.rgb(246, 248, 252);
+    public static final int BG = Color.rgb(248, 250, 252);
 
     private UiKit() {}
 
@@ -56,6 +59,7 @@ public final class UiKit {
         t.setTextSize(sp);
         t.setTextColor(color);
         t.setGravity(Gravity.CENTER_VERTICAL);
+        t.setLineSpacing(0f, 1.08f);
         if (bold) t.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         return t;
     }
@@ -65,12 +69,20 @@ public final class UiKit {
         b.setGravity(Gravity.CENTER);
         b.setClickable(true);
         b.setFocusable(true);
-        b.setMinHeight(dp(c, 48));
-        b.setPadding(dp(c, 14), dp(c, 10), dp(c, 14), dp(c, 10));
+        b.setMinHeight(dp(c, 50));
+        b.setPadding(dp(c, 16), dp(c, 11), dp(c, 16), dp(c, 11));
         b.setBackground(primary
-                ? rounded(BLUE, 12, c)
-                : outlined(Color.WHITE, BORDER, 12, c));
+                ? rounded(BLUE, 14, c)
+                : outlined(Color.WHITE, BORDER, 14, c));
         return b;
+    }
+
+    public static TextView sectionTitle(Context c, String title) {
+        return text(c, title, 13, TEXT, true);
+    }
+
+    public static TextView sectionHint(Context c, String hint) {
+        return text(c, hint, 11, MUTED, false);
     }
 
     public static LinearLayout.LayoutParams full(Context c, int topDp) {
