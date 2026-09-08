@@ -25,6 +25,7 @@ public final class MailManager {
     public static void kick(Context context) {
         Context app = context.getApplicationContext();
         if (!MailSettings.enabled(app)) return;
+        if (!NetworkHelper.isOnline(app)) return;
 
         SharedPreferences p = MailSettings.get(app);
         String version = p.getString(MailSettings.PENDING_VERSION, "");
@@ -63,6 +64,10 @@ public final class MailManager {
         Context app = context.getApplicationContext();
         if (!MailSettings.configured(app)) {
             if (listener != null) listener.onResult(false, "ตั้งค่า Gmail/ผู้รับให้ครบก่อน");
+            return;
+        }
+        if (!NetworkHelper.isOnline(app)) {
+            if (listener != null) listener.onResult(false, "ออฟไลน์ • ยังส่งอีเมลไม่ได้");
             return;
         }
         if (!SENDING.compareAndSet(false, true)) {
