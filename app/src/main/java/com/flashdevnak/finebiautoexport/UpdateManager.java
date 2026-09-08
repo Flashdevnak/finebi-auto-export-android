@@ -375,16 +375,21 @@ public final class UpdateManager {
             params.setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_REQUIRED);
         }
         int sessionId = installer.createSession(params);
+        boolean committed = false;
 
-        try (PackageInstaller.Session session = installer.openSession(sessionId);
-             InputStream in = new FileInputStream(apk);
-             OutputStream out = session.openWrite("base.apk", 0, apk.length())) {
-            byte[] buf = new byte[32 * 1024];
-            int n;
-            while ((n = in.read(buf)) >= 0) {
-                if (n > 0) out.write(buf, 0, n);
+        try (PackageInstaller.Session session = installer.openSession(sessionId)) {
+            // Android requires every file opened with Session.openWrite() to be
+            // closed before Session.commit(). Committing while the stream is still
+            // open throws SecurityException: "Files still open" on Android 10+.
+            try (InputStream in = new FileInputStream(apk);
+                 OutputStream out = session.openWrite("base.apk", 0, apk.length())) {
+                byte[] buf = new byte[32 * 1024];
+                int n;
+                while ((n = in.read(buf)) >= 0) {
+                    if (n > 0) out.write(buf, 0, n);
+                }
+                session.fsync(out);
             }
-            session.fsync(out);
 
             Intent result = new Intent(context, UpdateInstallReceiver.class);
             PendingIntent pending = PendingIntent.getBroadcast(
@@ -395,6 +400,13 @@ public final class UpdateManager {
                             | (Build.VERSION.SDK_INT >= 31 ? PendingIntent.FLAG_MUTABLE : 0)
             );
             session.commit(pending.getIntentSender());
+            committed = true;
+        } finally {
+            if (!committed) {
+                try {
+                    installer.abandonSession(sessionId);
+                } catch (Exception ignored) {}
+            }
         }
     }
 
