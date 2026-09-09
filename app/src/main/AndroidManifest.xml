@@ -17,6 +17,8 @@
     <application
         android:allowBackup="false"
         android:usesCleartextTraffic="false"
+        android:icon="@drawable/ic_finebi_auto_export"
+        android:roundIcon="@drawable/ic_finebi_auto_export"
         android:label="FineBI Auto Export"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
 
