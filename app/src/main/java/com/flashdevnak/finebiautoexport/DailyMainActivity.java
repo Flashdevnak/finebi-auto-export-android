@@ -90,6 +90,7 @@ public final class DailyMainActivity extends Activity {
 
     @Override protected void onResume() {
         super.onResume();
+        AppVisibility.setDailyVisible(true);
         ui.removeCallbacks(refreshRunnable);
         safeRefreshStatus();
         ui.postDelayed(refreshRunnable, 1000L);
@@ -104,6 +105,7 @@ public final class DailyMainActivity extends Activity {
     }
 
     @Override protected void onPause() {
+        AppVisibility.setDailyVisible(false);
         ui.removeCallbacks(refreshRunnable);
         super.onPause();
     }
@@ -171,10 +173,10 @@ public final class DailyMainActivity extends Activity {
         labels.addView(appSub);
         bar.addView(labels, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
-        connectionBadge = UiKit.text(this, "ออนไลน์", c ? 9 : 10, Color.WHITE, true);
+        connectionBadge = UiKit.text(this, "กำลังตรวจ", c ? 9 : 10, Color.WHITE, true);
         connectionBadge.setGravity(Gravity.CENTER);
         connectionBadge.setPadding(dp(9), dp(5), dp(9), dp(5));
-        connectionBadge.setBackground(UiKit.rounded(UiKit.GREEN, 20, this));
+        connectionBadge.setBackground(UiKit.rounded(UiKit.BLUE, 20, this));
         bar.addView(connectionBadge);
         return bar;
     }
@@ -231,13 +233,13 @@ public final class DailyMainActivity extends Activity {
 
         addSection(body,
                 "การเชื่อมต่อและข้อมูล",
-                "ตรวจเฉพาะสถานะที่ระบบใช้งานจริง",
+                "ระบบกู้คืนการเชื่อมต่อเองเมื่อเครือข่ายหรือ FineBI สะดุด",
                 18);
 
         LinearLayout sessionCard = metricCard(
                 "FineBI",
                 "รอการเชื่อมต่อ",
-                "สถานะเข้าสู่ระบบเก็บเฉพาะระหว่างการใช้งาน");
+                "เชื่อมต่อและกู้คืน session อัตโนมัติในเบื้องหลัง");
         sessionValue = (TextView) sessionCard.getChildAt(1);
         LinearLayout templateCard = metricCard(
                 "รูปแบบการส่งออก",
@@ -254,7 +256,7 @@ public final class DailyMainActivity extends Activity {
         LinearLayout pollCard = metricCard(
                 "รอบตรวจสอบ",
                 "-",
-                "ปรับความถี่อัตโนมัติตามช่วงเวลาและเครือข่าย");
+                "ข้อมูลไม่เปลี่ยนไม่ถือว่า connection หลุด หาก FineBI ยังตอบปกติ");
         pollValue = (TextView) pollCard.getChildAt(1);
         addResponsive(body, backendCard, pollCard, 9);
 
@@ -510,14 +512,24 @@ public final class DailyMainActivity extends Activity {
         long now = System.currentTimeMillis();
         boolean pollFresh = lastPollOk > 0L && now - lastPollOk <= 12 * 60_000L;
         boolean serviceFresh = heartbeat > 0L && now - heartbeat <= 12 * 60_000L;
+        boolean recovering = isRecoveryState(state);
 
-        connectionBadge.setText(online ? "ออนไลน์" : "ออฟไลน์");
-        connectionBadge.setBackground(UiKit.rounded(online ? UiKit.GREEN : UiKit.AMBER, 20, this));
-
-        sessionValue.setText(sessionReady
-                ? "เชื่อมต่อแล้ว"
-                : (online ? "รอเข้าสู่ระบบ" : "รอเครือข่าย"));
-        sessionValue.setTextColor(sessionReady ? UiKit.GREEN : UiKit.AMBER);
+        if (!online) {
+            sessionValue.setText("รอเครือข่าย • ระบบจะเชื่อมกลับเอง");
+            sessionValue.setTextColor(UiKit.AMBER);
+        } else if (pollFresh) {
+            sessionValue.setText("พร้อม • ตรวจล่าสุด " + formatClock(lastPollOk));
+            sessionValue.setTextColor(UiKit.GREEN);
+        } else if (recovering) {
+            sessionValue.setText("กำลังกู้คืนอัตโนมัติ");
+            sessionValue.setTextColor(UiKit.AMBER);
+        } else if (sessionReady) {
+            sessionValue.setText("เชื่อมต่อแล้ว • รอตรวจข้อมูล");
+            sessionValue.setTextColor(UiKit.BLUE);
+        } else {
+            sessionValue.setText("กำลังเชื่อม FineBI อัตโนมัติ");
+            sessionValue.setTextColor(UiKit.AMBER);
+        }
 
         templateValue.setText(templateReady ? "พร้อมใช้งาน" : "ต้องตั้งค่าครั้งแรก");
         templateValue.setTextColor(templateReady ? UiKit.GREEN : UiKit.AMBER);
@@ -578,7 +590,7 @@ public final class DailyMainActivity extends Activity {
             mailValue.setTextColor(UiKit.MUTED);
             mailButton.setText("แก้ไขการส่งอีเมล");
         } else if (mailStatus != null && mailStatus.startsWith("AUTH_REQUIRED")) {
-            mailValue.setText("ต้องเชื่อมต่อบัญชี Google ใหม่");
+            mailValue.setText("ต้องยืนยันสิทธิ์บัญชี Google");
             mailValue.setTextColor(UiKit.AMBER);
             mailButton.setText("ตรวจการตั้งค่าอีเมล");
         } else if (mailStatus != null && mailStatus.startsWith("RETRY")) {
@@ -600,6 +612,7 @@ public final class DailyMainActivity extends Activity {
         boolean dailyReady = enabled
                 && templateReady
                 && flashInstalled
+                && !recovering
                 && (online ? (pollFresh || sessionReady || "STARTING".equals(state) || "SESSION".equals(state)) : true)
                 && errors < 3;
 
@@ -615,12 +628,29 @@ public final class DailyMainActivity extends Activity {
         } else if (!flashInstalled) {
             dailyValue.setText("ไม่พบ Flashlink");
             dailyValue.setTextColor(UiKit.RED);
+        } else if (recovering) {
+            dailyValue.setText("กำลังกู้คืนอัตโนมัติ");
+            dailyValue.setTextColor(UiKit.AMBER);
         } else if (online && !serviceFresh && !pollFresh) {
             dailyValue.setText("กำลังกู้คืนการเชื่อมต่อ");
             dailyValue.setTextColor(UiKit.AMBER);
         } else {
             dailyValue.setText("กำลังเตรียมระบบ");
             dailyValue.setTextColor(UiKit.AMBER);
+        }
+
+        if (!enabled) {
+            setConnectionBadge("หยุด", UiKit.MUTED);
+        } else if (!online) {
+            setConnectionBadge("ออฟไลน์", UiKit.AMBER);
+        } else if (!templateReady || "NEEDS_SETUP".equals(state)) {
+            setConnectionBadge("ต้องตั้งค่า", UiKit.AMBER);
+        } else if (recovering) {
+            setConnectionBadge("กำลังกู้คืน", UiKit.AMBER);
+        } else if (dailyReady) {
+            setConnectionBadge("ปกติ", UiKit.GREEN);
+        } else {
+            setConnectionBadge("กำลังเชื่อม", UiKit.BLUE);
         }
 
         if (!templateReady) {
@@ -630,8 +660,11 @@ public final class DailyMainActivity extends Activity {
             heroTitle.setText("พร้อมเริ่มระบบอัตโนมัติ");
             heroSubtitle.setText("เมื่อเริ่มแล้ว ระบบจะตรวจข้อมูลและส่งออกรายงานตามรอบโดยไม่ต้องเปิดหน้าจอค้างไว้");
         } else if (!online) {
-            heroTitle.setText("รอการเชื่อมต่อเครือข่าย");
-            heroSubtitle.setText("ระบบพักการตรวจข้อมูลชั่วคราว และจะทำงานต่อเองเมื่อเครือข่ายกลับมา");
+            heroTitle.setText("รอเครือข่ายกลับมา");
+            heroSubtitle.setText("ไม่ต้องกดอะไร ระบบจะเชื่อม Flashlink และ FineBI กลับเองเมื่ออินเทอร์เน็ตพร้อม");
+        } else if (recovering) {
+            heroTitle.setText("กำลังกู้คืนอัตโนมัติ");
+            heroSubtitle.setText("ระบบกำลังกู้คืน FineBI ในเบื้องหลัง และจะกลับมาทำงานต่อเองเมื่อพร้อม");
         } else if (dailyReady) {
             heroTitle.setText("ระบบอัตโนมัติกำลังทำงาน");
             heroSubtitle.setText("FineBI Auto Export ทำงานเบื้องหลังและตรวจข้อมูลตามรอบที่เหมาะสม");
@@ -645,13 +678,27 @@ public final class DailyMainActivity extends Activity {
 
         StringBuilder f = new StringBuilder();
         f.append("FineBI Auto Export v").append(BuildConfig.VERSION_NAME);
-        f.append(" • เริ่มทำงานอัตโนมัติหลังเปิดเครื่องและหลังอัปเดตแอป");
+        f.append(" • กู้คืนเครือข่ายและ FineBI อัตโนมัติ");
+        if (lastPollOk > 0L) f.append("\nเชื่อมต่อ FineBI สำเร็จล่าสุด: ").append(formatTime(lastPollOk));
         if (nextCheck > 0L) f.append("\nตรวจข้อมูลครั้งถัดไป: ").append(formatTime(nextCheck));
-        if (lastPollOk > 0L) f.append("\nFineBI ตอบกลับล่าสุด: ").append(formatTime(lastPollOk));
         if (mailEnabled) f.append("\nอีเมลอัตโนมัติ: เปิดใช้งาน");
         if (errors > 0) f.append("\nระบบกำลังลองใหม่หลังพบข้อผิดพลาด: ").append(errors).append(" ครั้ง");
         if (!lastUpdateMessage.isEmpty()) f.append("\nอัปเดตแอป: ").append(lastUpdateMessage);
         footer.setText(f.toString());
+    }
+
+    private void setConnectionBadge(String text, int color) {
+        connectionBadge.setText(text);
+        connectionBadge.setBackground(UiKit.rounded(color, 20, this));
+    }
+
+    private boolean isRecoveryState(String state) {
+        if (state == null) return false;
+        return state.contains("RECOVERY")
+                || "RECOVERING".equals(state)
+                || "SESSION_EXPIRED".equals(state)
+                || "NETWORK_BACK".equals(state)
+                || "RETRYING".equals(state);
     }
 
     private String pollModeLabel(String mode) {
@@ -666,10 +713,15 @@ public final class DailyMainActivity extends Activity {
 
     private String humanStatusMessage(String state, String message) {
         if (message != null && !message.trim().isEmpty()) return message;
-        if ("SESSION".equals(state)) return "กำลังเตรียมการเชื่อมต่อ FineBI";
+        if ("SESSION".equals(state)) return "กำลังเชื่อม FineBI อัตโนมัติ";
+        if ("SESSION_RECOVERY".equals(state)) return "กำลังกู้คืน FineBI session อัตโนมัติ";
+        if ("FLASHLINK_RECOVERY".equals(state)) return "กำลังกู้คืน Flashlink และ FineBI อัตโนมัติ";
+        if ("HEALTH_RECOVERY".equals(state)) return "FineBI ขาดการตอบกลับ • กำลังกู้คืนเบื้องหลัง";
+        if ("SESSION_EXPIRED".equals(state)) return "Session หมดอายุ • กำลังเชื่อมใหม่อัตโนมัติ";
+        if ("NETWORK_BACK".equals(state)) return "เครือข่ายกลับมา • กำลังกู้คืนอัตโนมัติ";
+        if ("RETRYING".equals(state)) return "FineBI ตอบผิดพลาด • กำลังลองใหม่อัตโนมัติ";
         if ("STARTING".equals(state)) return "กำลังเริ่มบริการเบื้องหลัง";
         if ("RECOVERING".equals(state)) return "กำลังกู้คืนระบบอัตโนมัติ";
-        if ("LOGIN_OR_VPN".equals(state)) return "รอเข้าสู่ระบบ FineBI หรือการเชื่อมต่อ Flashlink";
         return "ระบบกำลังตรวจสอบสถานะล่าสุด";
     }
 
@@ -711,6 +763,11 @@ public final class DailyMainActivity extends Activity {
     private static String formatTime(long ms) {
         if (ms <= 0L) return "-";
         return new SimpleDateFormat("dd/MM/yyyy HH:mm:ss", Locale.getDefault()).format(new Date(ms));
+    }
+
+    private static String formatClock(long ms) {
+        if (ms <= 0L) return "-";
+        return new SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(new Date(ms));
     }
 
     private final class FileAdapter extends BaseAdapter {
