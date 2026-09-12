@@ -28,9 +28,14 @@ public final class AutoExportService extends Service {
     private static final String CHANNEL_ID = "finebi_auto_export";
     private static final Pattern TIME_PATTERN =
             Pattern.compile("20\\d{2}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}");
+
     private static final long SESSION_RELOAD_MS = 8_000L;
     private static final long SESSION_RECREATE_MS = 35_000L;
     private static final long FLASHLINK_WAKE_INTERVAL_MS = 45_000L;
+    private static final long HEALTH_WATCHDOG_MS = 60_000L;
+    private static final long POLL_OVERDUE_GRACE_MS = 2 * 60_000L;
+    private static final long NO_SUCCESS_RECOVERY_MS = 12 * 60_000L;
+    private static final long FIRST_SUCCESS_GRACE_MS = 3 * 60_000L;
 
     private HandlerThread workerThread;
     private Handler worker;
@@ -44,6 +49,7 @@ public final class AutoExportService extends Service {
     private volatile long bootstrapStartedAt;
     private volatile long lastBootstrapReloadAt;
     private volatile int bootstrapAttempts;
+    private volatile boolean returnToAppAfterRecovery;
     private volatile String lastNotificationText = "";
 
     private final Runnable monitorRunnable = new Runnable() {
@@ -71,6 +77,18 @@ public final class AutoExportService extends Service {
         }
     };
 
+    private final Runnable healthWatchdogRunnable = new Runnable() {
+        @Override public void run() {
+            if (stopping) return;
+            try {
+                healthCheckOnce();
+            } catch (Throwable ignored) {
+            } finally {
+                if (!stopping) scheduleHealthWatchdog();
+            }
+        }
+    };
+
     @Override
     public void onCreate() {
         super.onCreate();
@@ -88,6 +106,7 @@ public final class AutoExportService extends Service {
                 .putBoolean(Prefs.SMART_BATTERY, true)
                 .apply();
         Prefs.markServiceStarted(this);
+        scheduleHealthWatchdog();
 
         UpdateManager.maybeCheckAndNotify(this);
         MailManager.kick(this);
@@ -110,6 +129,7 @@ public final class AutoExportService extends Service {
         if (intent != null && ACTION_STOP.equals(intent.getAction())) {
             stopping = true;
             cancelMonitor();
+            cancelHealthWatchdog();
             Prefs.get(this).edit().putBoolean(Prefs.ENABLED, false).apply();
             Prefs.setStatus(this, "STOPPED", "หยุดโดยผู้ใช้");
             Prefs.setPollPlan(this, "STOPPED", 0L, 0L, false);
@@ -146,13 +166,12 @@ public final class AutoExportService extends Service {
                         Prefs.setStatus(
                                 AutoExportService.this,
                                 "NETWORK_BACK",
-                                "เครือข่ายกลับมา • กำลังเชื่อม Flashlink และ FineBI อัตโนมัติ"
+                                "เครือข่ายกลับมา • กำลังกู้คืน FineBI อัตโนมัติ"
                         );
                         updateNotification("เครือข่ายกลับมา • กำลังกู้คืนอัตโนมัติ", false);
                         MailManager.kick(AutoExportService.this);
                         UpdateManager.maybeCheckAndNotify(AutoExportService.this);
                         if (!SessionStore.isReady()) {
-                            tryOpenFlashlinkRateLimited();
                             restartBootstrapSession();
                         }
                         scheduleMonitor(750L);
@@ -273,6 +292,7 @@ public final class AutoExportService extends Service {
                             updateNotification("FineBI พร้อม • ระบบทำงานต่ออัตโนมัติ", false);
                             scheduleMonitor(250L);
                             main.postDelayed(() -> destroyBootstrapWebView(), 1500L);
+                            returnToAppIfNeeded();
                         }
 
                         @Override
@@ -284,9 +304,9 @@ public final class AutoExportService extends Service {
                             Prefs.setStatus(
                                     AutoExportService.this,
                                     "FLASHLINK_RECOVERY",
-                                    "FineBI ยังเข้าไม่ได้ • กำลังปลุก Flashlink และลองใหม่อัตโนมัติ"
+                                    "FineBI ยังเข้าไม่ได้ • กำลังกู้คืน Flashlink/FineBI อัตโนมัติ"
                             );
-                            updateNotification("กำลังปลุก Flashlink และเชื่อม FineBI ใหม่", false);
+                            updateNotification("กำลังกู้คืน Flashlink และ FineBI", false);
                             tryOpenFlashlinkRateLimited();
                             scheduleMonitor(5_000L);
                         }
@@ -314,6 +334,73 @@ public final class AutoExportService extends Service {
 
     private void cancelMonitor() {
         if (worker != null) worker.removeCallbacks(monitorRunnable);
+    }
+
+    private void scheduleHealthWatchdog() {
+        if (stopping || worker == null) return;
+        worker.removeCallbacks(healthWatchdogRunnable);
+        worker.postDelayed(healthWatchdogRunnable, HEALTH_WATCHDOG_MS);
+    }
+
+    private void cancelHealthWatchdog() {
+        if (worker != null) worker.removeCallbacks(healthWatchdogRunnable);
+    }
+
+    /**
+     * Connection watchdog intentionally uses successful API response time, not th_update_time.
+     * FineBI may legitimately keep the same data version for a long time; that must not be
+     * interpreted as a broken session or trigger visible navigation.
+     */
+    private void healthCheckOnce() {
+        if (stopping) return;
+        SharedPreferences p = Prefs.get(this);
+        if (!p.getBoolean(Prefs.ENABLED, false)) return;
+        if (!NetworkHelper.isOnline(this)) return;
+
+        long now = System.currentTimeMillis();
+        long lastPollOk = p.getLong(Prefs.LAST_POLL_OK_AT, 0L);
+        long nextCheck = p.getLong(Prefs.NEXT_CHECK_AT, 0L);
+        long serviceStart = p.getLong(Prefs.LAST_SERVICE_START_AT, 0L);
+        String state = p.getString(Prefs.SERVICE_STATE, "");
+
+        if (isRecoveryState(state)) return;
+
+        if (lastPollOk <= 0L) {
+            if (serviceStart > 0L && now - serviceStart >= FIRST_SUCCESS_GRACE_MS) {
+                Prefs.setStatus(
+                        this,
+                        "HEALTH_RECOVERY",
+                        "FineBI ยังไม่ตอบสำเร็จ • กำลังกู้คืนเบื้องหลังอัตโนมัติ"
+                );
+                updateNotification("FineBI ยังไม่ตอบ • กำลังกู้คืนเบื้องหลัง", false);
+                SessionStore.clear();
+                restartBootstrapSession();
+                scheduleMonitor(1_000L);
+            }
+            return;
+        }
+
+        boolean overdue = nextCheck > 0L && now > nextCheck + POLL_OVERDUE_GRACE_MS;
+        boolean noSuccessTooLong = now - lastPollOk >= NO_SUCCESS_RECOVERY_MS;
+        if (overdue && noSuccessTooLong) {
+            Prefs.setStatus(
+                    this,
+                    "HEALTH_RECOVERY",
+                    "FineBI ไม่ได้ตอบตามรอบ • กำลังกู้คืนเบื้องหลังอัตโนมัติ"
+            );
+            updateNotification("FineBI ขาดการตอบกลับ • กำลังกู้คืนเบื้องหลัง", false);
+            SessionStore.clear();
+            restartBootstrapSession();
+            scheduleMonitor(1_000L);
+        }
+    }
+
+    private boolean isRecoveryState(String state) {
+        if (state == null) return false;
+        return state.contains("RECOVERY")
+                || "RECOVERING".equals(state)
+                || "SESSION_EXPIRED".equals(state)
+                || "NETWORK_BACK".equals(state);
     }
 
     private void monitorOnce() {
@@ -571,8 +658,31 @@ public final class AutoExportService extends Service {
         long now = System.currentTimeMillis();
         if (now - lastFlashlinkAttemptAt < FLASHLINK_WAKE_INTERVAL_MS) return;
         lastFlashlinkAttemptAt = now;
+
+        if (AppVisibility.isDailyVisible()) {
+            returnToAppAfterRecovery = true;
+        }
+
         Prefs.setStatus(this, "FLASHLINK_RECOVERY", "กำลังปลุก Flashlink และเชื่อม FineBI ใหม่อัตโนมัติ");
         main.post(() -> FlashlinkHelper.open(this));
+    }
+
+    private void returnToAppIfNeeded() {
+        if (!returnToAppAfterRecovery) return;
+        returnToAppAfterRecovery = false;
+        main.postDelayed(() -> {
+            try {
+                Intent i = new Intent(AutoExportService.this, DailyMainActivity.class)
+                        .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+                PendingIntent pi = PendingIntent.getActivity(
+                        AutoExportService.this,
+                        909,
+                        i,
+                        PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+                );
+                pi.send();
+            } catch (Exception ignored) {}
+        }, 600L);
     }
 
     private void destroyBootstrapWebView() {
@@ -652,6 +762,7 @@ public final class AutoExportService extends Service {
     public void onDestroy() {
         stopping = true;
         cancelMonitor();
+        cancelHealthWatchdog();
         unregisterNetworkWatcher();
         if (workerThread != null) workerThread.quitSafely();
         destroyBootstrapWebView();
