@@ -19,7 +19,8 @@ public final class FlashlinkHelper {
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
     private static final long RETURN_MIN_DELAY_MS = 1_500L;
     private static final long RETURN_POLL_MS = 1_000L;
-    private static final long RETURN_TIMEOUT_MS = 2 * 60_000L;
+    private static final long RETURN_TIMEOUT_MS = 5 * 60_000L;
+    private static volatile long returnRequestId;
 
     private FlashlinkHelper() {}
 
@@ -33,17 +34,22 @@ public final class FlashlinkHelper {
     }
 
     /**
-     * Best-effort wake of the authorized Flashlink client. Android does not let
-     * one normal app press another app's Connect button. When recovery itself
-     * opened Flashlink while our UI was visible, wait until FineBI is healthy
-     * again and then return the user to FineBI Auto Export automatically.
+     * Best-effort wake of the authorized Flashlink client.
+     *
+     * Important: when AutoExportService opens Flashlink as part of recovery, the
+     * recovery flow owns that temporary navigation. Flashlink may auto-connect by
+     * itself, so there may be no user tap to trigger a lifecycle transition back
+     * to this app. We therefore wait for a NEW successful FineBI API response
+     * after Flashlink was opened, then bring FineBI Auto Export back to front.
+     *
+     * Manual Flashlink opens from an Activity do not auto-return, because those
+     * were initiated by the user rather than by unattended recovery.
      */
     public static boolean open(Context context) {
         if (!isInstalled(context)) return false;
 
         final Context app = context.getApplicationContext();
         final boolean serviceRecovery = !(context instanceof Activity);
-        final boolean returnAfterRecovery = serviceRecovery && AppVisibility.isDailyVisible();
         final long openedAt = System.currentTimeMillis();
 
         PackageManager pm = context.getPackageManager();
@@ -72,21 +78,26 @@ public final class FlashlinkHelper {
             }
         }
 
-        if (opened && returnAfterRecovery) {
+        if (opened && serviceRecovery) {
             scheduleReturnWhenRecovered(app, openedAt);
         }
         return opened;
     }
 
     private static void scheduleReturnWhenRecovered(Context app, long openedAt) {
+        final long requestId = ++returnRequestId;
         final long deadline = openedAt + RETURN_TIMEOUT_MS;
+
         MAIN.postDelayed(new Runnable() {
             @Override public void run() {
+                if (requestId != returnRequestId) return;
+
                 long now = System.currentTimeMillis();
                 if (isRecoveredSince(app, openedAt)) {
                     bringOwnAppToFront(app);
                     return;
                 }
+
                 if (now < deadline) {
                     MAIN.postDelayed(this, RETURN_POLL_MS);
                 }
@@ -94,17 +105,16 @@ public final class FlashlinkHelper {
         }, RETURN_MIN_DELAY_MS);
     }
 
+    /**
+     * A fresh successful API poll is the recovery proof. Do not use the old
+     * in-memory session alone because it may still look READY while Flashlink is
+     * reconnecting, which could return to the app too early.
+     */
     private static boolean isRecoveredSince(Context app, long openedAt) {
         try {
             SharedPreferences p = Prefs.get(app);
             long lastPollOk = p.getLong(Prefs.LAST_POLL_OK_AT, 0L);
-            if (lastPollOk > openedAt) return true;
-
-            String state = p.getString(Prefs.SERVICE_STATE, "");
-            boolean healthyState = "RUNNING".equals(state)
-                    || "WAITING".equals(state)
-                    || "EXPORTING".equals(state);
-            return SessionStore.isReady() && healthyState;
+            return lastPollOk >= openedAt;
         } catch (Throwable ignored) {
             return false;
         }
@@ -130,7 +140,7 @@ public final class FlashlinkHelper {
                 if (!AppVisibility.isDailyVisible()) {
                     sendReturnPendingIntent(app);
                 }
-            }, 350L);
+            }, 500L);
         } else {
             sendReturnPendingIntent(app);
         }
