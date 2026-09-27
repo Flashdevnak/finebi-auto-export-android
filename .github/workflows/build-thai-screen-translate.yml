@@ -6,6 +6,9 @@ on:
       - chatgpt/thai-screen-translate-build
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -30,15 +33,25 @@ jobs:
 
       - name: Rename APK and checksum
         run: |
-          cp app/build/outputs/apk/debug/app-debug.apk ThaiScreenTranslate-v1.1.0.apk
-          sha256sum ThaiScreenTranslate-v1.1.0.apk > ThaiScreenTranslate-v1.1.0.apk.sha256
+          cp app/build/outputs/apk/debug/app-debug.apk ThaiScreenTranslate-v1.2.0.apk
+          sha256sum ThaiScreenTranslate-v1.2.0.apk > ThaiScreenTranslate-v1.2.0.apk.sha256
 
-      - name: Upload APK
+      - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ThaiScreenTranslate-v1.1.0
+          name: ThaiScreenTranslate-v1.2.0
           path: |
-            ThaiScreenTranslate-v1.1.0.apk
-            ThaiScreenTranslate-v1.1.0.apk.sha256
+            ThaiScreenTranslate-v1.2.0.apk
+            ThaiScreenTranslate-v1.2.0.apk.sha256
           if-no-files-found: error
           retention-days: 14
+
+      - name: Publish in-app update asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view tst-v1.2.0 >/dev/null 2>&1; then
+            gh release upload tst-v1.2.0 ThaiScreenTranslate-v1.2.0.apk ThaiScreenTranslate-v1.2.0.apk.sha256 --clobber
+          else
+            gh release create tst-v1.2.0 ThaiScreenTranslate-v1.2.0.apk ThaiScreenTranslate-v1.2.0.apk.sha256 --target "$GITHUB_SHA" --title "Thai Screen Translate v1.2.0" --notes "Fix OCR/translation startup, add live diagnostics, coordinate scaling, model test and in-app update check."
+          fi
