@@ -1,66 +1,28 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-
-    <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
-    <uses-permission android:name="android.permission.WAKE_LOCK" />
-    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
-    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
-
-    <queries>
-        <package android:name="com.eagleyun.sase" />
-    </queries>
+    <uses-permission android:name="android.permission.INTERNET" />
 
     <application
-        android:allowBackup="false"
-        android:usesCleartextTraffic="false"
-        android:icon="@drawable/ic_finebi_auto_export"
-        android:roundIcon="@drawable/ic_finebi_auto_export"
-        android:label="FineBI Auto Export"
-        android:theme="@android:style/Theme.Material.Light.NoActionBar">
-
+        android:allowBackup="true"
+        android:label="แปลหน้าจอไทย"
+        android:theme="@style/AppTheme"
+        android:usesCleartextTraffic="false">
         <activity
-            android:name=".DailyMainActivity"
-            android:exported="true"
-            android:launchMode="singleTask"
-            android:screenOrientation="unspecified">
+            android:name=".MainActivity"
+            android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
 
-        <activity
-            android:name=".MainActivity"
-            android:exported="false"
-            android:screenOrientation="unspecified" />
-
-        <activity
-            android:name=".MailSettingsActivity"
-            android:exported="false"
-            android:screenOrientation="unspecified" />
-
         <service
-            android:name=".AutoExportService"
-            android:exported="false" />
-
-        <receiver
-            android:name=".BootReceiver"
-            android:enabled="true"
-            android:exported="false">
-            <intent-filter>
-                <action android:name="android.intent.action.BOOT_COMPLETED" />
-                <action android:name="android.intent.action.USER_UNLOCKED" />
-                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
-            </intent-filter>
-        </receiver>
-
-        <receiver
-            android:name=".UpdateInstallReceiver"
-            android:enabled="true"
-            android:exported="false" />
+            android:name=".ScreenTranslateService"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection" />
     </application>
 </manifest>

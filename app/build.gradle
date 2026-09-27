@@ -1,49 +1,21 @@
 plugins {
-    id "com.android.application"
+    id 'com.android.application'
 }
 
 android {
-    namespace "com.flashdevnak.finebiautoexport"
+    namespace 'com.oai.thaiscreentranslate'
     compileSdk 35
 
     defaultConfig {
-        applicationId "com.flashdevnak.finebiautoexport"
-        minSdk 29
-        targetSdk 33
-        versionCode 22
-        versionName "0.9.3"
-    }
-
-    buildFeatures {
-        buildConfig true
-    }
-
-    signingConfigs {
-        debug {
-            storeFile rootProject.file("ci-debug.keystore")
-            storePassword "finebi-debug"
-            keyAlias "finebi"
-            keyPassword "finebi-debug"
-        }
-    }
-
-    buildTypes {
-        debug {
-            signingConfig signingConfigs.debug
-        }
-        release {
-            minifyEnabled false
-            proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
-        }
-    }
-
-    compileOptions {
-        sourceCompatibility JavaVersion.VERSION_11
-        targetCompatibility JavaVersion.VERSION_11
+        applicationId 'com.oai.thaiscreentranslate'
+        minSdk 26
+        targetSdk 35
+        versionCode 2
+        versionName '1.1.0'
     }
 }
 
 dependencies {
-    // Google Identity Services AuthorizationClient for Gmail send-only OAuth.
-    implementation "com.google.android.gms:play-services-auth:21.5.0"
+    implementation 'com.google.mlkit:text-recognition-chinese:16.0.1'
+    implementation 'com.google.mlkit:translate:17.0.3'
 }
