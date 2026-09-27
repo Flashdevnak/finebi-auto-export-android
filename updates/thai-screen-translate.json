@@ -1,0 +1,6 @@
+{
+  "versionCode": 3,
+  "versionName": "1.2.0",
+  "apkUrl": "https://github.com/Flashdevnak/finebi-auto-export-android/releases/download/tst-v1.2.0/ThaiScreenTranslate-v1.2.0.apk",
+  "notes": "แก้บั๊กไม่แปล: OCR ทำงานได้แม้โมเดลแปลยังไม่พร้อม, เพิ่มแถบสถานะ OCR/การแปล, ปรับพิกัด overlay, เพิ่มปุ่มทดสอบโมเดล และเพิ่มตรวจอัปเดตจากในแอป"
+}

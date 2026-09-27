@@ -18,20 +18,34 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import com.google.mlkit.nl.translate.TranslateLanguage;
+import com.google.mlkit.nl.translate.Translation;
+import com.google.mlkit.nl.translate.Translator;
+import com.google.mlkit.nl.translate.TranslatorOptions;
+
 public class MainActivity extends Activity {
     private static final int REQ_CAPTURE = 1001;
     private static final int REQ_NOTIFY = 1002;
+
     private MediaProjectionManager projectionManager;
+    private TextView status;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        projectionManager = (MediaProjectionManager) getSystemService(Context.MEDIA_PROJECTION_SERVICE);
+        projectionManager = (MediaProjectionManager)
+                getSystemService(Context.MEDIA_PROJECTION_SERVICE);
         setContentView(buildUi());
+
         if (Build.VERSION.SDK_INT >= 33 &&
-                checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, REQ_NOTIFY);
+                checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                        != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(
+                    new String[]{Manifest.permission.POST_NOTIFICATIONS},
+                    REQ_NOTIFY);
         }
+
+        UpdateChecker.check(this, false);
     }
 
     private View buildUi() {
@@ -47,18 +61,30 @@ public class MainActivity extends Activity {
         title.setGravity(Gravity.CENTER);
         root.addView(title, new LinearLayout.LayoutParams(-1, -2));
 
-        TextView info = new TextView(this);
-        info.setText("แปลข้อความภาษาจีนทั่วทั้งหน้าจอแบบต่อเนื่อง ไม่จำกัดเฉพาะซับด้านล่าง\n\nครั้งแรกต้องดาวน์โหลดโมเดลแปลภาษา และ Android จะถามอนุญาตจับภาพหน้าจอ");
-        info.setTextSize(16);
-        info.setTextColor(Color.DKGRAY);
-        info.setPadding(0, dp(18), 0, dp(22));
-        root.addView(info, new LinearLayout.LayoutParams(-1, -2));
+        TextView version = new TextView(this);
+        version.setText("v1.2.0 • แปลทั้งหน้าจอ + ตรวจสถานะ OCR");
+        version.setTextSize(14);
+        version.setTextColor(Color.GRAY);
+        version.setGravity(Gravity.CENTER);
+        version.setPadding(0, dp(6), 0, dp(12));
+        root.addView(version, new LinearLayout.LayoutParams(-1, -2));
+
+        status = new TextView(this);
+        status.setText("สถานะ: พร้อมเริ่ม");
+        status.setTextSize(16);
+        status.setTextColor(Color.rgb(210, 95, 0));
+        status.setPadding(0, dp(8), 0, dp(16));
+        root.addView(status, new LinearLayout.LayoutParams(-1, -2));
 
         Button overlay = button("1) อนุญาตแสดงทับแอปอื่น");
         overlay.setOnClickListener(v -> requestOverlay());
         root.addView(overlay, lp());
 
-        Button start = button("2) เริ่มแปลทั้งหน้าจอ");
+        Button test = button("2) ทดสอบโมเดลแปลจีน → ไทย");
+        test.setOnClickListener(v -> testTranslation());
+        root.addView(test, lp());
+
+        Button start = button("3) เริ่มแปลทั้งหน้าจอ");
         start.setOnClickListener(v -> startTranslator());
         root.addView(start, lp());
 
@@ -67,15 +93,26 @@ public class MainActivity extends Activity {
             Intent i = new Intent(this, ScreenTranslateService.class);
             i.setAction(ScreenTranslateService.ACTION_STOP);
             startService(i);
+            status.setText("สถานะ: หยุดแล้ว");
         });
         root.addView(stop, lp());
 
+        Button update = button("ตรวจสอบอัปเดต");
+        update.setOnClickListener(v -> UpdateChecker.check(this, true));
+        root.addView(update, lp());
+
         TextView note = new TextView(this);
-        note.setText("การทำงาน: จับภาพเต็มจอ → OCR ภาษาจีน → แปลจีน→ไทยบนเครื่อง → วางคำแปลทับตำแหน่งเดิม\n\nสแกนประมาณทุก 0.7 วินาที และจำประโยคที่เคยแปลเพื่อลดความหน่วง\n\nบางแอป/วิดีโอที่ป้องกันการจับภาพ (FLAG_SECURE/DRM) จะไม่สามารถแปลได้");
+        note.setText(
+                "เมื่อเริ่มแล้ว จะมีแถบสีส้มเล็ก ๆ บนหน้าจอบอกสถานะจริง เช่น\n" +
+                "• OCR ทำงาน • ไม่พบข้อความจีน\n" +
+                "• พบจีน 8 จุด • กำลังเตรียมโมเดลแปล\n" +
+                "• พบจีน 8 • แปล 8\n\n" +
+                "ถ้าเห็นแถบสถานะ แต่ไม่มีคำแปล ให้แคปหน้าจอแถบนั้นส่งมาได้ทันที");
         note.setTextSize(14);
-        note.setTextColor(Color.GRAY);
-        note.setPadding(0, dp(20), 0, 0);
+        note.setTextColor(Color.DKGRAY);
+        note.setPadding(0, dp(18), 0, 0);
         root.addView(note, new LinearLayout.LayoutParams(-1, -2));
+
         return root;
     }
 
@@ -88,45 +125,108 @@ public class MainActivity extends Activity {
     }
 
     private LinearLayout.LayoutParams lp() {
-        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, dp(58));
-        p.setMargins(0, dp(8), 0, dp(8));
+        LinearLayout.LayoutParams p =
+                new LinearLayout.LayoutParams(-1, dp(58));
+        p.setMargins(0, dp(7), 0, dp(7));
         return p;
     }
 
     private void requestOverlay() {
         if (Settings.canDrawOverlays(this)) {
-            Toast.makeText(this, "อนุญาตแล้ว", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "อนุญาตแสดงทับแอปอื่นแล้ว",
+                    Toast.LENGTH_SHORT).show();
             return;
         }
-        Intent i = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+
+        Intent i = new Intent(
+                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
                 Uri.parse("package:" + getPackageName()));
         startActivity(i);
     }
 
+    private void testTranslation() {
+        status.setText("สถานะ: กำลังเตรียมโมเดลทดสอบ…");
+
+        TranslatorOptions opts = new TranslatorOptions.Builder()
+                .setSourceLanguage(TranslateLanguage.CHINESE)
+                .setTargetLanguage(TranslateLanguage.THAI)
+                .build();
+
+        Translator t = Translation.getClient(opts);
+        t.downloadModelIfNeeded()
+                .addOnSuccessListener(v ->
+                        t.translate("设置")
+                                .addOnSuccessListener(th -> {
+                                    status.setText(
+                                            "สถานะ: โมเดลแปลใช้ได้ → 设置 = " + th);
+                                    Toast.makeText(this,
+                                            "โมเดลแปลทำงาน: " + th,
+                                            Toast.LENGTH_LONG).show();
+                                    t.close();
+                                })
+                                .addOnFailureListener(e -> {
+                                    status.setText(
+                                            "สถานะ: แปลทดสอบไม่สำเร็จ: " + e.getMessage());
+                                    t.close();
+                                }))
+                .addOnFailureListener(e -> {
+                    status.setText(
+                            "สถานะ: โหลดโมเดลไม่สำเร็จ: " + e.getMessage());
+                    t.close();
+                });
+    }
+
     private void startTranslator() {
         if (!Settings.canDrawOverlays(this)) {
-            Toast.makeText(this, "กรุณาอนุญาตแสดงทับแอปอื่นก่อน", Toast.LENGTH_LONG).show();
+            Toast.makeText(this,
+                    "กรุณาอนุญาตแสดงทับแอปอื่นก่อน",
+                    Toast.LENGTH_LONG).show();
             requestOverlay();
             return;
         }
-        startActivityForResult(projectionManager.createScreenCaptureIntent(), REQ_CAPTURE);
+
+        status.setText("สถานะ: รออนุญาตจับภาพหน้าจอ");
+        startActivityForResult(
+                projectionManager.createScreenCaptureIntent(),
+                REQ_CAPTURE);
     }
 
     @Override
-    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+    protected void onActivityResult(
+            int requestCode,
+            int resultCode,
+            Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode == REQ_CAPTURE && resultCode == RESULT_OK && data != null) {
-            Intent svc = new Intent(this, ScreenTranslateService.class);
+
+        if (requestCode == REQ_CAPTURE &&
+                resultCode == RESULT_OK &&
+                data != null) {
+            Intent svc =
+                    new Intent(this, ScreenTranslateService.class);
             svc.setAction(ScreenTranslateService.ACTION_START);
-            svc.putExtra(ScreenTranslateService.EXTRA_RESULT_CODE, resultCode);
-            svc.putExtra(ScreenTranslateService.EXTRA_RESULT_DATA, data);
-            if (Build.VERSION.SDK_INT >= 26) startForegroundService(svc); else startService(svc);
-            Toast.makeText(this, "เริ่มแปลทั้งหน้าจอแล้ว", Toast.LENGTH_SHORT).show();
+            svc.putExtra(
+                    ScreenTranslateService.EXTRA_RESULT_CODE,
+                    resultCode);
+            svc.putExtra(
+                    ScreenTranslateService.EXTRA_RESULT_DATA,
+                    data);
+
+            if (Build.VERSION.SDK_INT >= 26) {
+                startForegroundService(svc);
+            } else {
+                startService(svc);
+            }
+
+            status.setText("สถานะ: เริ่มแล้ว — ดูแถบสีส้มบนหน้าจอ");
+            Toast.makeText(this,
+                    "เริ่มแปลทั้งหน้าจอแล้ว",
+                    Toast.LENGTH_SHORT).show();
             moveTaskToBack(true);
         }
     }
 
     private int dp(int v) {
-        return Math.round(v * getResources().getDisplayMetrics().density);
+        return Math.round(
+                v * getResources().getDisplayMetrics().density);
     }
 }
